@@ -39,3 +39,5 @@ gastest.o
 
 #Private data
 private/
+
+**/sign.gradle

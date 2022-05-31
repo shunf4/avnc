@@ -332,8 +332,13 @@ class VncActivity : AppCompatActivity() {
         //need Mouse right-click events. It is hardcoded to act as back-press, without
         //giving apps a chance to handle it. For better or worse, they set the 'source'
         //for such key events to Mouse, enabling the following workarounds.
+
+        /**
+         * shunf4 mod: On Onyx BOOX devices, [InputDevice.getDevice] sometimes returns null.
+         */
+        val dev : InputDevice? = InputDevice.getDevice(keyEvent.deviceId)
         if (keyEvent.keyCode == KeyEvent.KEYCODE_BACK &&
-            InputDevice.getDevice(keyEvent.deviceId).supportsSource(InputDevice.SOURCE_MOUSE) &&
+            dev != null && dev.supportsSource(InputDevice.SOURCE_MOUSE) &&
             viewModel.pref.input.interceptMouseBack) {
             if (keyEvent.action == KeyEvent.ACTION_DOWN)
                 touchHandler.onMouseBack()

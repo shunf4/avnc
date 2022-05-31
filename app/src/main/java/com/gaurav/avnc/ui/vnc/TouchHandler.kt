@@ -33,6 +33,10 @@ class TouchHandler(private val viewModel: VncViewModel, private val dispatcher: 
      ****************************************************************************************/
 
     fun onTouchEvent(event: MotionEvent): Boolean {
+        /**
+         * shunf4 mod: On Onyx BOOX devices, touch events has [InputDevice.SOURCE_STYLUS] set. We don't want that.
+         */
+        event.source = event.source and InputDevice.SOURCE_STYLUS.inv()
         val handled = handleStylusEvent(event) || handleMouseEvent(event) || handleGestureEvent(event)
         handleGestureStartStop(event)
         return handled

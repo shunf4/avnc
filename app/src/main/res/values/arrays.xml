@@ -78,11 +78,13 @@
 
     <string-array name="swipe1_action_entries">
         <item>@string/pref_gesture_action_none</item>
+        <item>@string/pref_gesture_action_remote_drag</item>
         <item>@string/pref_gesture_action_pan</item>
         <item>@string/pref_gesture_action_remote_scroll</item>
     </string-array>
     <string-array name="swipe1_action_values">
         <item>none</item>
+        <item>remote-drag</item>
         <item>pan</item>
         <item>remote-scroll</item>
     </string-array>

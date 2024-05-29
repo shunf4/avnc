@@ -120,7 +120,7 @@ class Dispatcher(private val activity: VncActivity) {
                         return@x
                     }
                 }
-                defaultMode.doRemoteScroll(null, dx, dy, 1)
+                defaultMode.doRemoteScroll(null, dx, dy, -1)
             }
         }
 

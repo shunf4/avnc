@@ -8,7 +8,11 @@
 
 package com.gaurav.avnc.ui.vnc
 
+import android.annotation.SuppressLint
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
+import androidx.databinding.BindingAdapter
 import com.gaurav.avnc.databinding.VirtualKeysBinding
 
 /**
@@ -24,18 +28,20 @@ class VirtualKeys(activity: VncActivity) {
     private val stub = activity.binding.virtualKeysStub
     private var openedWithKb = false
 
+    val container: View? get() = stub.root
+
     fun show() {
         init()
-        stub.root?.visibility = View.VISIBLE
+        container?.visibility = View.VISIBLE
     }
 
     fun hide() {
-        stub.root?.visibility = View.GONE
+        container?.visibility = View.GONE
         openedWithKb = false //Reset flag
     }
 
     fun onKeyboardOpen() {
-        if (pref.vkOpenWithKeyboard && stub.root?.visibility != View.VISIBLE) {
+        if (pref.vkOpenWithKeyboard && container?.visibility != View.VISIBLE) {
             show()
             openedWithKb = true
         }
@@ -51,6 +57,7 @@ class VirtualKeys(activity: VncActivity) {
     fun releaseMetaKeys() {
         val binding = stub.binding as? VirtualKeysBinding
         binding?.apply {
+            superBtn.isChecked = false
             shiftBtn.isChecked = false
             ctrlBtn.isChecked = false
             altBtn.isChecked = false
@@ -67,4 +74,45 @@ class VirtualKeys(activity: VncActivity) {
         binding.showAll = pref.vkShowAll
         binding.hideBtn.setOnClickListener { hide() }
     }
+}
+
+/**
+ * When a View is touched, we schedule a callback to to simulate a click.
+ * As long as finger stays on the view, we keep repeating this callback.
+ *
+ * Another option here is to send VNC KeyEvent(down) on [MotionEvent.ACTION_DOWN]
+ * and then send VNC KeyEvent(up) on [MotionEvent.ACTION_UP].
+ */
+@BindingAdapter("isRepeatable")
+fun repeatableKeyBinding(keyView: View, repeatable: Boolean) {
+    if (!repeatable)
+        return
+
+    keyView.setOnTouchListener(object : View.OnTouchListener {
+        private var doRepeat = false
+
+        private fun repeat(v: View) {
+            if (doRepeat) {
+                v.performClick()
+                v.postDelayed({ repeat(v) }, ViewConfiguration.getKeyRepeatDelay().toLong())
+            }
+        }
+
+        @SuppressLint("ClickableViewAccessibility")
+        override fun onTouch(v: View, event: MotionEvent): Boolean {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    doRepeat = true
+                    v.postDelayed({ repeat(v) }, ViewConfiguration.getKeyRepeatTimeout().toLong())
+                }
+
+                MotionEvent.ACTION_POINTER_DOWN,
+                MotionEvent.ACTION_UP,
+                MotionEvent.ACTION_CANCEL -> {
+                    doRepeat = false
+                }
+            }
+            return false
+        }
+    })
 }

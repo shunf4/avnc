@@ -10,7 +10,7 @@
     <string name="title_save">Enregistrer</string>
     <string name="title_undo">Annuler</string>
     <string name="title_settings">Paramètres</string>
-    <string name="title_credentials_required">Se connecter</string>
+    <string name="title_vnc_login">Connexion VNC</string>
     <string name="title_export">Exporter</string>
     <string name="title_import">Importer</string>
     <string name="title_view_only_mode">Visualisation uniquement</string>
@@ -23,7 +23,7 @@
     <string name="title_delete_servers_before_import">Supprimer les serveurs courants avant l\'importation</string>
     <string name="title_password">Mot de passe</string>
     <string name="title_use_repeater">Utiliser un répéteur</string>
-    <string name="title_github_repo">Code source</string>
+    <string name="title_source_code">Code source</string>
     <string name="hint_server_name">Nom (par ex. PC Travail)</string>
     <string name="hint_host">Hôte</string>
     <string name="hint_repeater_host">Hôte du répéteur</string>
@@ -40,7 +40,6 @@
     <string name="msg_imported">Importé</string>
     <string name="msg_exported">Exporté</string>
     <string name="msg_export_auth_required">Authentifiez-vous pour exporter des serveurs</string>
-    <string name="msg_export_auth_missing">Votre appareil n\'est pas sécurisé. Activez le verrouillage de l\'écran pour permettre l\'authentification avant l\'exportation.</string>
     <string name="msg_invalid_key_file">Fichier de clé privée invalide</string>
     <string name="msg_invalid_vnc_uri">URI VNC invalide</string>
     <string name="msg_copied_to_clipboard">Copié</string>
@@ -55,12 +54,12 @@
     <string name="desc_keyboard_btn">Ouvrir le clavier</string>
     <string name="desc_virtual_keys_btn">Afficher les touches virtuelles</string>
     <string name="desc_reset_zoom_btn">Réinitialiser le niveau de zoom</string>
-    <string name="desc_retry_connection_btn">Réessayer</string>
+    <string name="desc_retry_connection_btn">Reconnecter</string>
     <string name="title_edit">Modifier</string>
     <string name="title_duplicate">Dupliquer</string>
     <string name="msg_ptr_hiding_not_supported">Non pris en charge sur cet appareil</string>
     <string name="desc_clear_url_btn">Effacer</string>
-    <string name="pref_gesture_action_none">Aucun</string>
+    <string name="title_none">Aucun</string>
     <string name="pref_gesture_action_right_click">Clic droit</string>
     <string name="title_open_source_libraries">Bibliothèques open source</string>
     <string name="pref_tools_summary">Importation/Exportation, déboggage</string>
@@ -71,7 +70,7 @@
     <string name="title_use_ssh_tunnel">Utiliser un tunnel SSH</string>
     <string name="title_about">À propos</string>
     <string name="title_private_key">Clé privée</string>
-    <string name="title_change">Modifier</string>
+    <string name="title_change">Changer</string>
     <string name="title_license">Licence</string>
     <string name="title_report_bug">Signaler un problème</string>
     <string name="desc_back_btn">Retour</string>
@@ -98,9 +97,6 @@
     <string name="tip_empty_server_list">La liste des serveurs est vide.
 \nCliquez sur « <b>+</b> » ; pour ajouter un serveur, ou
 \nUtilisez la barre d\'adresse supérieure pour vous connecter directement.</string>
-    <string name="pref_experimental_immersive_mode">Mode immersif complet</string>
-    <string name="pref_experimental_toolbar_swipe_close">Faîtes glisser pour fermer le menu de la barre d\'outils</string>
-    <string name="pref_experimental_immersive_mode_summary">Masquer toutes les barres du système en mode plein écran</string>
     <string name="pref_theme_option_system">Système</string>
     <string name="pref_swipe2">Glissement à deux doigts</string>
     <string name="pref_double_tap">Appui double</string>
@@ -126,12 +122,10 @@
     <string name="pref_gesture_action_open_keyboard">Ouvrir le clavier</string>
     <string name="pref_prefer_advanced_editor">Ouvrir directement les options avancées du serveur</string>
     <string name="pref_logs">Journaux</string>
-    <string name="pref_experimental_toolbar_swipe_close_summary">Au cours d\'une session distante, vous pouvez faire glisser pour fermer la barre d\'outils ouverte</string>
     <string name="pref_enable_pip">Picture-in-picture</string>
     <string name="pref_toolbar">Barre d\'outils</string>
-    <string name="pref_direct_touch_summary_on">Effectuer les actions au point de contact</string>
-    <string name="pref_direct_touch">Pointage direct</string>
-    <string name="pref_direct_touch_summary_off">Effectuer les actions au niveau du pointeur</string>
+    <string name="pref_gesture_style_touchscreen_summary">Effectuer les actions au point de contact</string>
+    <string name="pref_gesture_style_touchpad_summary">Effectuer les actions au niveau du pointeur</string>
     <string name="pref_debugging">Débogage</string>
     <string name="title_clear">Effacer</string>
     <string name="pref_theme_option_dark">Sombre</string>
@@ -147,12 +141,8 @@
     <string name="pref_km_right_alt_to_super">Alt Droite → Super</string>
     <string name="pref_zoom_min">Minimum</string>
     <string name="pref_zoom_max">Maximum</string>
-    <string name="pref_credential">Connexion</string>
-    <string name="pref_cred_autocomplete">Autocomplétion</string>
-    <string name="pref_cred_autocomplete_summary">Suggérer les identifiants enregistrés lors de la connexion à de nouveaux serveurs</string>
     <string name="pref_discovery">Découverte</string>
     <string name="pref_clipboard_sync">Synchronisation du presse-papiers</string>
-    <string name="pref_drag">Déplacement (appui long et glissement)</string>
     <string name="pref_km_language_switch_to_super">Changement de langue → Super</string>
     <string name="pref_import_export">Importer/Exporter des serveurs</string>
     <string name="pref_keycode_map">Carte des codes-clés</string>
@@ -164,10 +154,45 @@
     <string name="pref_gesture_action_pan">Cadre local panoramique</string>
     <string name="pref_mouse_back">Bouton retour</string>
     <string name="pref_mouse_back_action_default">Par défaut</string>
-    <string name="pref_mouse_back_action_middle">Clic molette</string>
-    <string name="pref_mouse_back_action_right">Clic droit</string>
-    <string name="title_default_security">Sécurité par défaut</string>
-    <string name="msg_hide_remote_pointer_option_moved">« Masquer le pointeur distant » est désormais disponible dans
-\n« Paramètres → Saisie → Souris »</string>
     <string name="pref_swipe_sensitivity">Sensibilité du défilement</string>
+    <string name="msg_drag_gesture_help">L\'attribution d\'une action à ce geste modifiera la détection de la pression longue :
+\n
+\n<b>Appuyer-tenir-lâcher</b> → Appui long
+\n<b>Appui maintenu-glissement</b> → Appui long et glissement</string>
+    <string name="pref_orientation">Orientation de l\'écran</string>
+    <string name="pref_orientation_option_auto">Automatique</string>
+    <string name="pref_orientation_option_portrait">Portrait</string>
+    <string name="pref_orientation_option_landscape">Paysage</string>
+    <string name="msg_zoom_reset">Zoom réinitialisé à 100 %</string>
+    <string name="desc_zoom_options_btn">Options du zoom</string>
+    <string name="desc_save_zoom_btn">Enregistrer le zoom actuel comme valeur par défaut</string>
+    <string name="pref_gesture_style">Style de geste</string>
+    <string name="pref_gesture_style_auto_summary">Basé sur les paramètres de l\'appli</string>
+    <string name="pref_gesture_style_touchscreen">Écran tactile</string>
+    <string name="pref_gesture_style_touchpad">Pavé tactile</string>
+    <string name="pref_display_cutout">Tirer derrière la découpe de l\'écran (expérimental)</string>
+    <string name="pref_per_orientation_zoom">Zoom séparé pour chaque orientation</string>
+    <string name="pref_saved_server_lock_summary">Déverrouillage biométrique/mot de passe obligatoire pour se connecter</string>
+    <string name="pref_saved_server_lock">Verrouiller les serveurs enregistrés</string>
+    <string name="title_image_quality">Qualité de l\'image</string>
+    <string name="title_unlock_dialog">Déverrouiller pour continuer</string>
+    <string name="title_image_quality_raw">Brute</string>
+    <string name="title_vnc_security">Sécurité</string>
+    <string name="title_automatic">Automatique</string>
+    <string name="msg_zoom_saved">Sauvegarde du zoom actuel comme valeur par défaut</string>
+    <string name="pref_touch_test">Test tactile</string>
+    <string name="pref_key_test">Test des touches</string>
+    <string name="pref_invert_vertical_scrolling">Inverser le défilement vertical</string>
+    <string name="title_orientation">Orientation</string>
+    <string name="pref_long_press_swipe">Appui long et balayage</string>
+    <string name="pref_auto_reconnect">Reconnecter automatiquement</string>
+    <string name="title_button_up_delay">Envoyer des évènements de clics retardés</string>
+    <string name="msg_button_up_delay_help">Retarder les évènements de clics peut aider dans certains cas rares si une application ne répond pas aux clics.</string>
+    <string name="pref_double_tap_swipe">Double tapotement et glissement</string>
+    <string name="msg_shortcut_server_deleted">Ce serveur a été supprimé</string>
+    <string name="msg_zoom_reset_default">Le niveau de zoom a été réinitialisé aux valeurs par défaut</string>
+    <string name="title_unlock_private_key">Déverrouiller la clé privée</string>
+    <string name="title_ssh_login">Connexion SSH</string>
+    <string name="pref_gesture_action_remote_drag_middle">Faire glisser avec le bouton central</string>
+    <string name="title_resize_remote_desktop">Redimensionner la session distante en fonction de la fenêtre locale</string>
 </resources>

@@ -39,6 +39,15 @@
         <item>end</item>
     </string-array>
 
+    <string-array name="gesture_style_entries">
+        <item>@string/pref_gesture_style_touchscreen</item>
+        <item>@string/pref_gesture_style_touchpad</item>
+    </string-array>
+    <string-array name="gesture_style_values">
+        <item>touchscreen</item>
+        <item>touchpad</item>
+    </string-array>
+
     <string-array name="tap2_action_entries">
         <item>@string/pref_gesture_action_none</item>
         <item>@string/pref_gesture_action_right_click</item>
@@ -81,12 +90,14 @@
         <item>@string/pref_gesture_action_remote_drag</item>
         <item>@string/pref_gesture_action_pan</item>
         <item>@string/pref_gesture_action_remote_scroll</item>
+        <item>@string/pref_gesture_action_remote_drag</item>
     </string-array>
     <string-array name="swipe1_action_values">
         <item>none</item>
         <item>remote-drag</item>
         <item>pan</item>
         <item>remote-scroll</item>
+        <item>remote-drag</item>
     </string-array>
 
     <string-array name="swipe2_action_entries">
@@ -100,15 +111,32 @@
         <item>remote-scroll</item>
     </string-array>
 
-    <string-array name="drag_action_entries">
+    <string-array name="double_tap_swipe_action_entries">
         <item>@string/pref_gesture_action_none</item>
         <item>@string/pref_gesture_action_remote_drag</item>
+        <item>@string/pref_gesture_action_remote_drag_middle</item>
         <item>@string/pref_gesture_action_pan</item>
         <item>@string/pref_gesture_action_remote_scroll</item>
     </string-array>
-    <string-array name="drag_action_values">
+    <string-array name="double_tap_swipe_action_values">
         <item>none</item>
         <item>remote-drag</item>
+        <item>remote-drag-middle</item>
+        <item>pan</item>
+        <item>remote-scroll</item>
+    </string-array>
+
+    <string-array name="long_press_swipe_action_entries">
+        <item>@string/pref_gesture_action_none</item>
+        <item>@string/pref_gesture_action_remote_drag</item>
+        <item>@string/pref_gesture_action_remote_drag_middle</item>
+        <item>@string/pref_gesture_action_pan</item>
+        <item>@string/pref_gesture_action_remote_scroll</item>
+    </string-array>
+    <string-array name="long_press_swipe_action_values">
+        <item>none</item>
+        <item>remote-drag</item>
+        <item>remote-drag-middle</item>
         <item>pan</item>
         <item>remote-scroll</item>
     </string-array>
@@ -122,5 +150,48 @@
         <item>default</item>
         <item>middle-click</item>
         <item>right-click</item>
+    </string-array>
+
+
+    <!--~~~~~~~~~~~~~~~~~~~~~~~~~~~ Arrays for profile editor ~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
+    <!--Values for gesture style-->
+    <string-array name="profile_editor_gesture_style_labels">
+        <item>@string/pref_gesture_style_auto</item>
+        <item>@string/pref_gesture_style_touchscreen</item>
+        <item>@string/pref_gesture_style_touchpad</item>
+    </string-array>
+    <string-array name="profile_editor_gesture_style_descriptions">
+        <item>@string/pref_gesture_style_auto_summary</item>
+        <item>@string/pref_gesture_style_touchscreen_summary</item>
+        <item>@string/pref_gesture_style_touchpad_summary</item>
+    </string-array>
+    <string-array name="profile_editor_gesture_style_values">
+        <item>auto</item>
+        <item>touchscreen</item>
+        <item>touchpad</item>
+    </string-array>
+
+    <!--Values for security types-->
+    <string-array name="profile_editor_security_labels">
+        <item>@string/title_automatic</item>
+        <item>@string/title_none</item>
+        <item>VncAuth</item>
+        <item>AnonTLS</item>
+        <item>VeNCrypt</item>
+    </string-array>
+    <string-array name="profile_editor_security_values">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+        <item>18</item>
+        <item>19</item>
+    </string-array>
+
+
+    <!--Dummy string array used for testing-->
+    <string-array name="dummy_array">
+        <item>Item 1</item>
+        <item>Item 2</item>
+        <item>Item 3</item>
     </string-array>
 </resources>

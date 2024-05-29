@@ -126,15 +126,23 @@ static void onBell(rfbClient *client) {
     env->CallVoidMethod(obj, mid);
 }
 
-static void onGotXCutText(rfbClient *client, const char *text, int len) {
+static void onGotXCutText(rfbClient *client, const char *text, int len, bool is_utf8) {
     auto obj = getManagedClient(client);
     auto env = context.getEnv();
     auto cls = context.managedCls;
 
-    jmethodID mid = env->GetMethodID(cls, "cbGotXCutText", "([B)V");
+    jmethodID mid = env->GetMethodID(cls, "cbGotXCutText", "([BZ)V");
     jbyteArray bytes = env->NewByteArray(len);
     env->SetByteArrayRegion(bytes, 0, len, reinterpret_cast<const jbyte *>(text));
-    env->CallVoidMethod(obj, mid, bytes);
+    env->CallVoidMethod(obj, mid, bytes, is_utf8);
+}
+
+static void onGotXCutTextLatin1(rfbClient *client, const char *text, int len) {
+    onGotXCutText(client, text, len, false);
+}
+
+static void onGotXCutTextUTF8(rfbClient *client, const char *text, int len) {
+    onGotXCutText(client, text, len, true);
 }
 
 static rfbBool onHandleCursorPos(rfbClient *client, int x, int y) {
@@ -231,7 +239,8 @@ static void setCallbacks(rfbClient *client) {
     client->GetPassword = onGetPassword;
     client->GetCredential = onGetCredential;
     client->Bell = onBell;
-    client->GotXCutText = onGotXCutText;
+    client->GotXCutText = onGotXCutTextLatin1;
+    client->GotXCutTextUTF8 = onGotXCutTextUTF8;
     client->HandleCursorPos = onHandleCursorPos;
     client->FinishedFrameBufferUpdate = onFinishedFrameBufferUpdate;
     client->MallocFrameBuffer = onMallocFrameBuffer;
@@ -266,7 +275,8 @@ Java_com_gaurav_avnc_vnc_VncClient_nativeClientCreate(JNIEnv *env, jobject thiz)
 extern "C"
 JNIEXPORT void JNICALL
 Java_com_gaurav_avnc_vnc_VncClient_nativeConfigure(JNIEnv *env, jobject thiz, jlong client_ptr,
-                                                   jint securityType, jboolean use_local_cursor) {
+                                                   jint securityType, jboolean use_local_cursor, jint image_quality,
+                                                   jboolean use_raw_encoding) {
     auto client = (rfbClient *) client_ptr;
 
     // 0 means all auth types
@@ -279,6 +289,21 @@ Java_com_gaurav_avnc_vnc_VncClient_nativeConfigure(JNIEnv *env, jobject thiz, jl
         client->appData.useRemoteCursor = TRUE;
         getClientExtension(client)->cursor = newCursor();
     }
+
+    client->appData.qualityLevel = image_quality;
+    if (use_raw_encoding)
+        client->appData.encodingsString = "raw";
+
+    // Change pixel format to match with the default format used by most VNC
+    // servers. Technically, we should not have to this as VNC servers have to
+    // respect whatever pixel format client prefers. But there are some wierd
+    // servers which ignore pixel format sent by client. As a result, users
+    // blame AVNC for not rendering the colors properly.
+    // Note: This change affects how OpenGL Texture for framebuffer is rendered,
+    // and it only works for 24 bit-per-pixel density.
+    client->format.redShift = 16;
+    client->format.greenShift = 8;
+    client->format.blueShift = 0;
 }
 
 extern "C"
@@ -305,6 +330,12 @@ Java_com_gaurav_avnc_vnc_VncClient_nativeInit(JNIEnv *env, jobject thiz, jlong c
 
     return JNI_FALSE;
 
+}
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_com_gaurav_avnc_vnc_VncClient_nativeIsServerMacOS(JNIEnv *env, jobject thiz, jlong client_ptr) {
+    auto client = (rfbClient *) client_ptr;
+    return client->serverMajor == 3 && client->serverMinor == 889;
 }
 
 extern "C"
@@ -353,8 +384,14 @@ Java_com_gaurav_avnc_vnc_VncClient_nativeGetLastErrorStr(JNIEnv *env, jobject th
 extern "C"
 JNIEXPORT jboolean JNICALL
 Java_com_gaurav_avnc_vnc_VncClient_nativeSendKeyEvent(JNIEnv *env, jobject thiz, jlong client_ptr,
-                                                      jlong key, jboolean is_down) {
-    return (jboolean) SendKeyEvent((rfbClient *) client_ptr, (uint32_t) key, is_down ? TRUE : FALSE);
+                                                      jint key_sym, jint xt_code, jboolean is_down) {
+    auto client = (rfbClient *) client_ptr;
+    rfbBool down = is_down ? TRUE : FALSE;
+
+    if (xt_code > 0 && SendExtendedKeyEvent(client, key_sym, xt_code, down))
+        return JNI_TRUE;
+    else
+        return SendKeyEvent(client, key_sym, down);
 }
 
 extern "C"
@@ -366,12 +403,16 @@ Java_com_gaurav_avnc_vnc_VncClient_nativeSendPointerEvent(JNIEnv *env, jobject t
 
 extern "C"
 JNIEXPORT jboolean JNICALL
-Java_com_gaurav_avnc_vnc_VncClient_nativeSendCutText(JNIEnv *env, jobject thiz, jlong client_ptr, jbyteArray bytes) {
+Java_com_gaurav_avnc_vnc_VncClient_nativeSendCutText(JNIEnv *env, jobject thiz, jlong client_ptr, jbyteArray bytes,
+                                                     jboolean is_utf8) {
+    auto client = (rfbClient *) client_ptr;
     auto textBuffer = env->GetByteArrayElements(bytes, nullptr);
     auto textLen = env->GetArrayLength(bytes);
     auto textChars = reinterpret_cast<char *>(textBuffer);
 
-    rfbBool result = SendClientCutText((rfbClient *) client_ptr, textChars, textLen);
+    rfbBool result = is_utf8
+                     ? SendClientCutTextUTF8(client, textChars, textLen)
+                     : SendClientCutText(client, textChars, textLen);
 
     env->ReleaseByteArrayElements(bytes, textBuffer, JNI_ABORT);
     return (jboolean) result;
@@ -379,9 +420,31 @@ Java_com_gaurav_avnc_vnc_VncClient_nativeSendCutText(JNIEnv *env, jobject thiz, 
 
 extern "C"
 JNIEXPORT jboolean JNICALL
+Java_com_gaurav_avnc_vnc_VncClient_nativeIsUTF8CutTextSupported(JNIEnv *env, jobject thiz, jlong client_ptr) {
+    return (jboolean) (((rfbClient *) client_ptr)->extendedClipboardServerCapabilities != 0);
+}
+
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_com_gaurav_avnc_vnc_VncClient_nativeSetDesktopSize(JNIEnv *env, jobject thiz, jlong client_ptr, jint width,
+                                                        jint height) {
+    return (jboolean) SendExtDesktopSize((rfbClient *) client_ptr, width, height);
+}
+
+extern "C"
+JNIEXPORT jboolean JNICALL
 Java_com_gaurav_avnc_vnc_VncClient_nativeRefreshFrameBuffer(JNIEnv *env, jobject thiz, jlong clientPtr) {
     auto client = (rfbClient *) clientPtr;
-    return (jboolean) SendFramebufferUpdateRequest(client, 0, 0, client->width, client->height, FALSE);
+    return (jboolean) SendFramebufferUpdateRequest(client, 0, 0, client->width, client->height, TRUE);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_gaurav_avnc_vnc_VncClient_nativeSetAutomaticFramebufferUpdates(JNIEnv *env, jobject thiz, jlong client_ptr,
+                                                                        jboolean enabled) {
+    auto client = ((rfbClient *) client_ptr);
+    client->automaticUpdateRequests = enabled ? TRUE : FALSE;
+    if (enabled) SendIncrementalFramebufferUpdateRequest(client);
 }
 
 extern "C"
@@ -428,6 +491,10 @@ Java_com_gaurav_avnc_vnc_VncClient_nativeUploadFrameTexture(JNIEnv *env, jobject
                      GL_RGBA,
                      GL_UNSIGNED_BYTE,
                      client->frameBuffer);
+
+        // Note: client->frameBuffer data is actually in 'BGRA' format, instead of 'RGBA'.
+        // But OpenGL ES doesn't support that directly. So we use 'GL_RGBA' here, and flip
+        // the components to correct order inside fragment shader.
     }
 
     UNLOCK(ex->mutex);

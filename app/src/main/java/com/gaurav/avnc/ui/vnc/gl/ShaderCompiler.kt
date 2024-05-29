@@ -8,9 +8,25 @@
 
 package com.gaurav.avnc.ui.vnc.gl
 
-import android.opengl.GLES20.*
+import android.opengl.GLES20.GL_COMPILE_STATUS
+import android.opengl.GLES20.GL_FRAGMENT_SHADER
+import android.opengl.GLES20.GL_LINK_STATUS
+import android.opengl.GLES20.GL_VALIDATE_STATUS
+import android.opengl.GLES20.GL_VERTEX_SHADER
+import android.opengl.GLES20.glAttachShader
+import android.opengl.GLES20.glCompileShader
+import android.opengl.GLES20.glCreateProgram
+import android.opengl.GLES20.glCreateShader
+import android.opengl.GLES20.glDeleteProgram
+import android.opengl.GLES20.glDeleteShader
+import android.opengl.GLES20.glGetProgramInfoLog
+import android.opengl.GLES20.glGetProgramiv
+import android.opengl.GLES20.glGetShaderInfoLog
+import android.opengl.GLES20.glGetShaderiv
+import android.opengl.GLES20.glLinkProgram
+import android.opengl.GLES20.glShaderSource
+import android.opengl.GLES20.glValidateProgram
 import android.util.Log
-import com.gaurav.avnc.BuildConfig
 
 object ShaderCompiler {
 
@@ -76,9 +92,6 @@ object ShaderCompiler {
         if (vertexShaderId == 0 || fragmentShaderId == 0)
             return 0
 
-        val programId = linkProgram(vertexShaderId, fragmentShaderId)
-        if (BuildConfig.DEBUG)
-            validateProgram(programId)
-        return programId
+        return linkProgram(vertexShaderId, fragmentShaderId)
     }
 }

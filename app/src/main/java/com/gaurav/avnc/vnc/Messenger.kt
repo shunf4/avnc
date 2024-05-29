@@ -23,25 +23,19 @@ class Messenger(private val client: VncClient) {
      **************************************************************************/
 
     private val sender = Executors.newSingleThreadExecutor()
+    private val senderLock = Any()
 
     private fun execute(action: Runnable) {
-        sender.execute(action)
+        synchronized(senderLock) {
+            if (!sender.isShutdown)
+                sender.execute(action)
+        }
     }
 
     fun cleanup() {
-        if (sender.isShutdown)
-            return
-
-        sender.shutdownNow()
-
-        try {
-            sender.awaitTermination(60, TimeUnit.SECONDS)
-        } catch (e: InterruptedException) {
-            Log.w(javaClass.simpleName, "Interrupted while waiting for Sender thread to shutdown!")
-        }
-
-        if (!sender.isShutdown)
-            Log.w(javaClass.simpleName, "Unable to shutdown Sender thread!")
+        synchronized(senderLock) { sender.shutdown() }
+        runCatching { sender.awaitTermination(60, TimeUnit.SECONDS) }
+        if (!sender.isTerminated) Log.w(javaClass.simpleName, "Unable to fully stop Sender thread!")
     }
 
 
@@ -78,12 +72,16 @@ class Messenger(private val client: VncClient) {
         }
     }
 
-    fun sendKey(keySym: Int, isDown: Boolean): Boolean {
+    fun sendKey(keySym: Int, xtCode: Int, isDown: Boolean): Boolean {
         if (!client.connected)
             return false
 
-        execute { client.sendKeyEvent(keySym, isDown) }
+        execute { client.sendKeyEvent(keySym, xtCode, isDown) }
         return true
+    }
+
+    fun insertButtonUpDelay() {
+        execute { runCatching { Thread.sleep(200) } }
     }
 
     /**************************************************************************
@@ -92,5 +90,13 @@ class Messenger(private val client: VncClient) {
 
     fun sendClipboardText(text: String) {
         execute { client.sendCutText(text) }
+    }
+
+    fun setDesktopSize(width: Int, height: Int) {
+        execute { client.setDesktopSize(width, height) }
+    }
+
+    fun refreshFrameBuffer() {
+        execute { client.refreshFrameBuffer() }
     }
 }

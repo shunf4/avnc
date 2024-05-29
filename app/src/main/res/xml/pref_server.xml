@@ -15,17 +15,16 @@
         app:key="clipboard_sync"
         app:title="@string/pref_clipboard_sync" />
 
-    <PreferenceCategory
-        app:icon="@drawable/ic_key"
-        app:title="@string/pref_credential">
+    <SwitchPreference
+        app:defaultValue="false"
+        app:key="lock_saved_server"
+        app:summary="@string/pref_saved_server_lock_summary"
+        app:title="@string/pref_saved_server_lock" />
 
-        <SwitchPreference
-            app:defaultValue="true"
-            app:key="cred_autocomplete"
-            app:summary="@string/pref_cred_autocomplete_summary"
-            app:title="@string/pref_cred_autocomplete" />
-
-    </PreferenceCategory>
+    <SwitchPreference
+        app:defaultValue="false"
+        app:key="auto_reconnect"
+        app:title="@string/pref_auto_reconnect" />
 
     <PreferenceCategory
         app:icon="@drawable/ic_search"

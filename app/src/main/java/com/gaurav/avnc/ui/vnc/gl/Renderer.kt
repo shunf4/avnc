@@ -8,7 +8,10 @@
 
 package com.gaurav.avnc.ui.vnc.gl
 
-import android.opengl.GLES20.*
+import android.opengl.GLES20.GL_COLOR_BUFFER_BIT
+import android.opengl.GLES20.glClear
+import android.opengl.GLES20.glClearColor
+import android.opengl.GLES20.glViewport
 import android.opengl.GLSurfaceView
 import android.opengl.Matrix
 import com.gaurav.avnc.viewmodel.VncViewModel
@@ -21,13 +24,12 @@ import javax.microedition.khronos.opengles.GL10
 class Renderer(val viewModel: VncViewModel) : GLSurfaceView.Renderer {
 
     private val projectionMatrix = FloatArray(16)
-    private val state = viewModel.frameState
     private val hideCursor = viewModel.pref.input.hideRemoteCursor
     private lateinit var program: FrameProgram
     private lateinit var frame: Frame
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
-        glClearColor(.1f, .1f, .1f, 1f)
+        glClearColor(0f, 0f, 0f, 1f)
 
         frame = Frame()
         program = FrameProgram()
@@ -75,6 +77,7 @@ class Renderer(val viewModel: VncViewModel) : GLSurfaceView.Renderer {
         if (!viewModel.client.connected)
             return
 
+        val state = viewModel.frameState.getSnapshot()
         if (state.vpWidth == 0f || state.vpHeight == 0f)
             return
 
@@ -91,6 +94,8 @@ class Renderer(val viewModel: VncViewModel) : GLSurfaceView.Renderer {
 
         frame.updateFbSize(state.fbWidth, state.fbHeight)
         frame.bind(program)
+
+        program.validate()
         frame.draw()
     }
 }

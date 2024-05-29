@@ -14,16 +14,19 @@ import android.os.Build
 import android.os.Bundle
 import androidx.annotation.Keep
 import androidx.appcompat.app.AppCompatActivity
-import androidx.preference.ListPreference
+import androidx.core.text.HtmlCompat
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.SwitchPreference
 import com.gaurav.avnc.R
+import com.gaurav.avnc.util.DeviceAuthPrompt
 import com.google.android.material.appbar.MaterialToolbar
 
 class PrefsActivity : AppCompatActivity(), PreferenceFragmentCompat.OnPreferenceStartFragmentCallback {
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        DeviceAuthPrompt.applyFingerprintDialogFix(supportFragmentManager)
+
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
 
@@ -39,7 +42,7 @@ class PrefsActivity : AppCompatActivity(), PreferenceFragmentCompat.OnPreference
     }
 
     override fun onSupportNavigateUp(): Boolean {
-        onBackPressed()
+        onBackPressedDispatcher.onBackPressed()
         return true
     }
 
@@ -47,7 +50,7 @@ class PrefsActivity : AppCompatActivity(), PreferenceFragmentCompat.OnPreference
      * Starts new fragment corresponding to given [pref].
      */
     override fun onPreferenceStartFragment(caller: PreferenceFragmentCompat, pref: Preference): Boolean {
-        val fragment = supportFragmentManager.fragmentFactory.instantiate(classLoader, pref.fragment)
+        val fragment = supportFragmentManager.fragmentFactory.instantiate(classLoader, pref.fragment!!)
 
         supportFragmentManager.beginTransaction()
                 .replace(R.id.fragment_host, fragment)
@@ -95,7 +98,7 @@ class PrefsActivity : AppCompatActivity(), PreferenceFragmentCompat.OnPreference
     }
 
     @Keep class Input : PrefFragment(R.xml.pref_input) {
-        private var naturalScrollingUpdater: OnSharedPreferenceChangeListener? = null
+        private var invertScrollingUpdater: OnSharedPreferenceChangeListener? = null
 
         override fun onCreate(savedInstanceState: Bundle?) {
             super.onCreate(savedInstanceState)
@@ -109,26 +112,54 @@ class PrefsActivity : AppCompatActivity(), PreferenceFragmentCompat.OnPreference
                 }
             }
 
+            val style = findPreference<ListPreferenceEx>("gesture_style")!!
             val swipe1 = findPreference<ListPreferenceEx>("gesture_swipe1")!!
-            val swipe2 = findPreference<ListPreference>("gesture_swipe2")!!
-            val drag = findPreference<ListPreferenceEx>("gesture_drag")!!
+            val longPressSwipe = findPreference<ListPreferenceEx>("gesture_long_press_swipe")!!
 
-            swipe1.apply { disabledStateSummary = getString(R.string.pref_gesture_action_move_pointer) }
-            drag.apply { helpMessage = getText(R.string.msg_drag_gesture_help) }
+            swipe1.disabledStateSummary = getString(R.string.pref_gesture_action_move_pointer)
+            longPressSwipe.helpMessage = getText(R.string.msg_drag_gesture_help)
 
-            // To reduce clutter & avoid 'UI overload', Natural scrolling pref is not visible by default.
-            // It becomes visible only when 'Scroll remote content' option is used.
-            naturalScrollingUpdater = OnSharedPreferenceChangeListener { _, _ ->
-                val pref = findPreference<SwitchPreference>("natural_scrolling")
-                pref?.isVisible = "remote-scroll" in listOf(swipe1.value, swipe2.value, drag.value)
+            swipe1.isEnabled = style.value != "touchpad"
+            style.setOnPreferenceChangeListener { _, value -> swipe1.isEnabled = value != "touchpad"; true }
+
+            val styleHelp = "<b>${getString(R.string.pref_gesture_style_touchscreen)}</b><br/>" +
+                            getString(R.string.pref_gesture_style_touchscreen_summary) + "<br/><br/>" +
+                            "<b>${getString(R.string.pref_gesture_style_touchpad)}</b><br/>" +
+                            getString(R.string.pref_gesture_style_touchpad_summary)
+
+            style.helpMessage = HtmlCompat.fromHtml(styleHelp, 0)
+
+            // To reduce clutter & avoid 'UI overload', pref to invert vertical scrolling is
+            // only visible when 'Scroll remote content' option is used.
+            invertScrollingUpdater = OnSharedPreferenceChangeListener { prefs, _ ->
+                findPreference<SwitchPreference>("invert_vertical_scrolling")!!.apply {
+                    isVisible = prefs.all.values.contains("remote-scroll")
+                }
             }
-            naturalScrollingUpdater?.onSharedPreferenceChanged(null, null) //Initial update
-            swipe1.sharedPreferences.registerOnSharedPreferenceChangeListener(naturalScrollingUpdater)
+            invertScrollingUpdater?.onSharedPreferenceChanged(swipe1.sharedPreferences, null) //Initial update
+            swipe1.sharedPreferences?.registerOnSharedPreferenceChangeListener(invertScrollingUpdater)
 
         }
     }
 
-    @Keep class Server : PrefFragment(R.xml.pref_server)
+    @Keep class Server : PrefFragment(R.xml.pref_server) {
+        private val authPrompt by lazy { DeviceAuthPrompt(requireActivity()) }
+
+        override fun onCreate(savedInstanceState: Bundle?) {
+            super.onCreate(savedInstanceState)
+            val savedServerLock = findPreference<SwitchPreference>("lock_saved_server")!!
+
+            if (authPrompt.canLaunch()) {
+                authPrompt.init({ savedServerLock.isChecked = !savedServerLock.isChecked }, { })
+                savedServerLock.setOnPreferenceChangeListener { _, _ ->
+                    authPrompt.launch(getString(R.string.title_unlock_dialog))
+                    false
+                }
+            } else {
+                savedServerLock.isEnabled = false
+            }
+        }
+    }
+
     @Keep class Tools : PrefFragment(R.xml.pref_tools)
-    @Keep class Experimental : PrefFragment(R.xml.pref_experimental)
 }

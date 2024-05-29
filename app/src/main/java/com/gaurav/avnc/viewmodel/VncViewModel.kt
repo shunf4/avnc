@@ -9,18 +9,27 @@
 package com.gaurav.avnc.viewmodel
 
 import android.app.Application
+import android.graphics.RectF
 import android.util.Log
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
+import com.gaurav.avnc.model.LoginInfo
 import com.gaurav.avnc.model.ServerProfile
 import com.gaurav.avnc.ui.vnc.FrameScroller
 import com.gaurav.avnc.ui.vnc.FrameState
 import com.gaurav.avnc.ui.vnc.FrameView
+import com.gaurav.avnc.util.LiveRequest
+import com.gaurav.avnc.util.getClipboardText
+import com.gaurav.avnc.util.setClipboardText
+import com.gaurav.avnc.viewmodel.service.HostKey
+import com.gaurav.avnc.viewmodel.service.SshTunnel
 import com.gaurav.avnc.vnc.Messenger
 import com.gaurav.avnc.vnc.UserCredential
 import com.gaurav.avnc.vnc.VncClient
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.IOException
@@ -63,7 +72,7 @@ import java.lang.ref.WeakReference
  * via OpenGL ES. [frameState] is read from this thread to decide how/where frame
  * should be drawn.
  */
-class VncViewModel(app: Application) : BaseViewModel(app), VncClient.Observer {
+class VncViewModel(val profile: ServerProfile, app: Application) : BaseViewModel(app), VncClient.Observer {
 
     /**
      * Connection lifecycle:
@@ -84,15 +93,15 @@ class VncViewModel(app: Application) : BaseViewModel(app), VncClient.Observer {
         Created,
         Connecting,
         Connected,
-        Disconnected,
+        Disconnected;
+
+        companion object {
+            val State?.isConnected get() = (this == Connected)
+            val State?.isDisconnected get() = (this == Disconnected)
+        }
     }
 
     val client = VncClient(this)
-
-    /**
-     * [ServerProfile] used for current connection.
-     */
-    var profile = ServerProfile()
 
     /**
      * We have two places for connection state (both are synced):
@@ -108,20 +117,21 @@ class VncViewModel(app: Application) : BaseViewModel(app), VncClient.Observer {
     val disconnectReason = MutableLiveData("")
 
     /**
-     * Fired when [VncClient] has asked for credential. It is used to
-     * show Credentials dialog to user and return the result to receiver
-     * thread.
-     *
-     * Value of this request is true if username & password are required
-     * and false if only password is required.
+     * Fired when we need some credentials from user.
+     * It will trigger the Login dialog.
      */
-    val credentialRequest = LiveRequest<Boolean, UserCredential>(UserCredential(), viewModelScope)
+    val loginInfoRequest = LiveRequest<LoginInfo.Type, LoginInfo>(LoginInfo(), viewModelScope)
 
     /**
-     * List of known credentials. Used for providing suggestion when
-     * new credentials are required.
+     * Fired to unlock saved servers.
      */
-    val knownCredentials by lazy { serverProfileDao.getCredentials() }
+    val serverUnlockRequest = LiveRequest<Any?, Boolean>(false, viewModelScope)
+
+    /**
+     * List of saved profiles.
+     * Used by login-autocompletion.
+     */
+    val savedProfiles by lazy { serverProfileDao.getLiveList() }
 
     /**
      * Holds a weak reference to [FrameView] instance.
@@ -141,7 +151,7 @@ class VncViewModel(app: Application) : BaseViewModel(app), VncClient.Observer {
     /**
      * Holds information about scaling, translation etc.
      */
-    val frameState = FrameState(pref)
+    val frameState = with(pref.viewer) { FrameState(zoomMin, zoomMax, perOrientationZoom) }
 
     /**
      * Used for scrolling/animating the frame.
@@ -166,17 +176,15 @@ class VncViewModel(app: Application) : BaseViewModel(app), VncClient.Observer {
      **************************************************************************/
 
     /**
-     * Initialize VNC connection using given profile.
-     * [initConnection] can be called multiple times due to activity restarts.
+     * Initialize VNC connection.
+     * It can be called multiple times due to activity restarts.
      */
-    fun initConnection(profile: ServerProfile) {
-        if (state.value != State.Created)
-            return
-
-        this.profile = profile
-        state.value = State.Connecting
-
-        launchConnection()
+    fun initConnection() {
+        if (state.value == State.Created) {
+            state.value = State.Connecting
+            frameState.setZoom(profile.zoom1, profile.zoom2)
+            launchConnection()
+        }
     }
 
     private fun launchConnection() {
@@ -184,7 +192,7 @@ class VncViewModel(app: Application) : BaseViewModel(app), VncClient.Observer {
 
             runCatching {
 
-                configureClient()
+                preConnect()
                 connect()
                 processMessages()
 
@@ -201,8 +209,13 @@ class VncViewModel(app: Application) : BaseViewModel(app), VncClient.Observer {
         }
     }
 
-    private fun configureClient() {
-        client.configure(profile.viewOnly, profile.securityType, true  /* Hardcoded to true */)
+    private fun preConnect() {
+        if (profile.ID != 0L && pref.server.lockSavedServer)
+            if (!serverUnlockRequest.requestResponse(null))
+                throw IOException("Could not unlock server")
+
+        client.configure(profile.viewOnly, profile.securityType, true  /* Hardcoded to true */,
+                         profile.imageQuality, profile.useRawEncoding)
 
         if (profile.useRepeater)
             client.setupRepeater(profile.idOnRepeater)
@@ -213,17 +226,18 @@ class VncViewModel(app: Application) : BaseViewModel(app), VncClient.Observer {
             ServerProfile.CHANNEL_TCP ->
                 client.connect(profile.host, profile.port)
 
-            ServerProfile.CHANNEL_SSH_TUNNEL -> {
-                sshTunnel.open()
-                client.connect(sshTunnel.localHost, sshTunnel.localPort)
-                sshTunnel.stopAcceptingConnections()
-            }
+            ServerProfile.CHANNEL_SSH_TUNNEL ->
+                sshTunnel.open().use {
+                    client.connect(it.host, it.port)
+                }
 
             else -> throw IOException("Unknown Channel: ${profile.channelType}")
         }
 
         state.postValue(State.Connected)
-        sendClipboardText() //Initial sync
+
+        // Initial sync, slightly delayed to allow extended clipboard negotiations
+        launchIO { delay(1000L); sendClipboardText() }
     }
 
     private fun processMessages() {
@@ -242,7 +256,7 @@ class VncViewModel(app: Application) : BaseViewModel(app), VncClient.Observer {
      */
     fun saveProfile() {
         if (profile.ID != 0L)
-            asyncIO { serverProfileDao.update(profile) }
+            launch { serverProfileDao.update(profile) }
     }
 
     /**************************************************************************
@@ -250,6 +264,8 @@ class VncViewModel(app: Application) : BaseViewModel(app), VncClient.Observer {
      **************************************************************************/
 
     fun updateZoom(scaleFactor: Float, fx: Float, fy: Float) {
+        if (profile.fZoomLocked) return
+
         val appliedScaleFactor = frameState.updateZoom(scaleFactor)
 
         //Calculate how much the focus would shift after scaling
@@ -263,7 +279,17 @@ class VncViewModel(app: Application) : BaseViewModel(app), VncClient.Observer {
     }
 
     fun resetZoom() {
-        frameState.resetZoom()
+        frameState.setZoom(1f, 1f)
+        frameViewRef.get()?.requestRender()
+    }
+
+    fun resetZoomToDefault() {
+        frameState.setZoom(profile.zoom1, profile.zoom2)
+        frameViewRef.get()?.requestRender()
+    }
+
+    fun setZoom(zoom1: Float, zoom2: Float) {
+        frameState.setZoom(zoom1, zoom2)
         frameViewRef.get()?.requestRender()
     }
 
@@ -277,50 +303,102 @@ class VncViewModel(app: Application) : BaseViewModel(app), VncClient.Observer {
         frameViewRef.get()?.requestRender()
     }
 
+    fun toggleZoomLock(enabled: Boolean) {
+        profile.fZoomLocked = enabled
+        saveProfile()
+    }
+
+    fun saveZoom() {
+        profile.zoom1 = frameState.zoomScale1
+        profile.zoom2 = frameState.zoomScale2
+        saveProfile()
+    }
+
+    fun setSafeArea(safeArea: RectF) {
+        frameState.setSafeArea(safeArea)
+        frameViewRef.get()?.requestRender()
+    }
+
     /**************************************************************************
-     * Clipboard Sync
+     * Miscellaneous
      **************************************************************************/
 
     fun sendClipboardText() {
-        viewModelScope.launch(Dispatchers.Main) {
-            if (pref.server.clipboardSync)
-                getClipboardText()?.let { messenger.sendClipboardText(it) }
+        if (pref.server.clipboardSync && client.connected) launchIO {
+            getClipboardText(app)?.let { messenger.sendClipboardText(it) }
         }
     }
 
+    private var clipReceiverJob: Job? = null
     private fun receiveClipboardText(text: String) {
-        viewModelScope.launch(Dispatchers.Main) {
-            if (pref.server.clipboardSync)
-                setClipboardText(text)
+        if (!pref.server.clipboardSync)
+            return
+
+        // This is a protective measure against servers which send every 'selection' made on the server.
+        // Setting clip text involves IPC, so these events can exhaust Binder resources, leading to ANRs.
+        if (clipReceiverJob?.isActive == true) {
+            Log.w(javaClass.simpleName, "Dropping clip text received from server, previous text is still pending")
+            return
         }
+
+        clipReceiverJob = launchIO {
+            setClipboardText(app, text)
+        }
+    }
+
+    fun getLoginInfo(type: LoginInfo.Type): LoginInfo {
+        val vu = profile.username
+        val vp = profile.password
+        val sp = profile.sshPassword
+
+        if (type == LoginInfo.Type.VNC_PASSWORD && vp.isNotBlank())
+            return LoginInfo(password = vp)
+
+        if (type == LoginInfo.Type.VNC_CREDENTIAL && vu.isNotBlank() && vp.isNotBlank())
+            return LoginInfo(username = vu, password = vp)
+
+        if (type == LoginInfo.Type.SSH_PASSWORD && sp.isNotBlank())
+            return LoginInfo(password = sp)
+
+        // Something is missing, so we have to ask the user
+        return loginInfoRequest.requestResponse(type)  // Blocking call
+    }
+
+    /**
+     * Resize remote desktop to match with local window size (if requested by user).
+     * In portrait mode, safe area is used instead of window to exclude the keyboard.
+     */
+    fun resizeRemoteDesktop() {
+        if (profile.resizeRemoteDesktop) frameState.let {
+            if (it.windowWidth > it.windowHeight)
+                messenger.setDesktopSize(it.windowWidth.toInt(), it.windowHeight.toInt())
+            else
+                messenger.setDesktopSize(it.safeArea.width().toInt(), it.safeArea.height().toInt())
+        }
+    }
+
+    fun pauseFrameBufferUpdates() {
+        //client.setAutomaticFrameBufferUpdates(false)
+    }
+
+    fun resumeFrameBufferUpdates() {
+        //client.setAutomaticFrameBufferUpdates(true)
+    }
+
+    fun refreshFrameBuffer() {
+        messenger.refreshFrameBuffer()
     }
 
     /**************************************************************************
      * [VncClient.Observer] Implementation
      **************************************************************************/
 
-    /**
-     * Called when remote server has asked for password.
-     */
     override fun onPasswordRequired(): String {
-        if (profile.password.isNotBlank())
-            return profile.password
-
-        return obtainCredential(false).password
+        return getLoginInfo(LoginInfo.Type.VNC_PASSWORD).password
     }
 
-    /**
-     * Called when remote server has asked for both username & password.
-     */
     override fun onCredentialRequired(): UserCredential {
-        if (profile.username.isNotBlank() && profile.password.isNotBlank())
-            return UserCredential(profile.username, profile.password)
-
-        return obtainCredential(true)
-    }
-
-    private fun obtainCredential(usernameRequired: Boolean): UserCredential {
-        return credentialRequest.requestResponse(usernameRequired)   //Blocking call
+        return getLoginInfo(LoginInfo.Type.VNC_CREDENTIAL).let { UserCredential(it.username, it.password) }
     }
 
     override fun onFramebufferUpdated() {
@@ -332,7 +410,7 @@ class VncViewModel(app: Application) : BaseViewModel(app), VncClient.Observer {
     }
 
     override fun onFramebufferSizeChanged(width: Int, height: Int) {
-        viewModelScope.launch(Dispatchers.Main) {
+        launchMain {
             frameState.setFramebufferSize(width.toFloat(), height.toFloat())
         }
     }

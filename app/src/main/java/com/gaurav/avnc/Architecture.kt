@@ -12,16 +12,21 @@ import com.gaurav.avnc.model.ServerProfile
 import com.gaurav.avnc.model.db.MainDb
 import com.gaurav.avnc.ui.about.AboutActivity
 import com.gaurav.avnc.ui.home.HomeActivity
-import com.gaurav.avnc.ui.home.ProfileEditorFragment
 import com.gaurav.avnc.ui.home.ServerTabs
 import com.gaurav.avnc.ui.home.UrlBarActivity
 import com.gaurav.avnc.ui.prefs.PrefsActivity
-import com.gaurav.avnc.ui.vnc.*
+import com.gaurav.avnc.ui.vnc.Dispatcher
+import com.gaurav.avnc.ui.vnc.FrameState
+import com.gaurav.avnc.ui.vnc.FrameView
+import com.gaurav.avnc.ui.vnc.HostKeyFragment
+import com.gaurav.avnc.ui.vnc.LoginFragment
+import com.gaurav.avnc.ui.vnc.VirtualKeys
+import com.gaurav.avnc.ui.vnc.VncActivity
 import com.gaurav.avnc.viewmodel.HomeViewModel
 import com.gaurav.avnc.viewmodel.PrefsViewModel
-import com.gaurav.avnc.viewmodel.SshTunnel
+import com.gaurav.avnc.viewmodel.service.SshTunnel
 import com.gaurav.avnc.viewmodel.VncViewModel
-import com.gaurav.avnc.vnc.Discovery
+import com.gaurav.avnc.viewmodel.service.Discovery
 import com.gaurav.avnc.vnc.Messenger
 import com.gaurav.avnc.vnc.VncClient
 
@@ -73,7 +78,7 @@ import com.gaurav.avnc.vnc.VncClient
  *
  * - Lists of saved & discovered servers, in [ServerTabs].
  *
- * - [ProfileEditorFragment], used for creating/editing [ServerProfile].
+ * - Profile editors used for creating/editing [ServerProfile].
  *
  *
  * VNC UI
@@ -95,7 +100,7 @@ import com.gaurav.avnc.vnc.VncClient
  * - Connection to VNC server is managed by [VncViewModel], using [VncClient].
  * - [VncClient] is a wrapper around native `rfbClient` from LibVNCClient.
  *
- * - [CredentialFragment] is used to ask username & password from user.
+ * - [LoginFragment] is used to ask username & password from user.
  * - [SshTunnel] is used to create a SSH tunnel, which can be used for connection.
  * - [HostKeyFragment] is used to verify unknown SSH hosts.
  * -
@@ -117,9 +122,6 @@ import com.gaurav.avnc.vnc.VncClient
  * - Server discovery ([Discovery])
  * - SSH Tunnel ([SshTunnel])
  * - Import/Export (in [PrefsViewModel])
- *
- * Right now these are scattered around, but eventually should be moved to a
- * separate package in ViewModel layer.
  *
  * Note: These are NOT Android Services (these are called services for lack of a better word).
  */

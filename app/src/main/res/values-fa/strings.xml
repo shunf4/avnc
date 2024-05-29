@@ -18,7 +18,7 @@
     <string name="title_save">ذخیره</string>
     <string name="title_undo">برگردان</string>
     <string name="title_settings">تنظیمات</string>
-    <string name="title_credentials_required">ورود</string>
+    <string name="title_vnc_login">ورود</string>
     <string name="title_remember">به یاد داشتن</string>
     <string name="title_export">برون‌ریزی</string>
     <string name="title_import">درون‌ریزی</string>
@@ -38,7 +38,7 @@
     <string name="title_license">پروانه</string>
     <string name="title_open_source_libraries">کتابخانه‌های متن‌باز</string>
     <string name="title_report_bug">گزارش یک اشکال</string>
-    <string name="title_github_repo">کد منبع</string>
+    <string name="title_source_code">کد منبع</string>
     <string name="hint_urlbar">اتّصال به یک کارساز</string>
     <string name="hint_server_name">نام (مثلا: رایانهٔ کاری)</string>
     <string name="hint_host">میزبان</string>
@@ -60,7 +60,6 @@
     <string name="msg_imported">درون‌ریزی شد</string>
     <string name="msg_exported">برون‌ریزی شد</string>
     <string name="msg_export_auth_required">احراز هویت برای برون‌ریزی کارسازها</string>
-    <string name="msg_export_auth_missing">افزارهٔ شما ایمن نیست. پیش از برون‌ریزی قفل صفحه‌تان را برای بکار انداختن احراز هویت، روشن کنید.</string>
     <string name="msg_invalid_key_file">پروندهٔ کلید خصوصی نامعتبر</string>
     <string name="msg_invalid_vnc_uri">VNC URI نامعتبر</string>
     <string name="msg_copied_to_clipboard">رونویسی شد</string>
@@ -103,7 +102,7 @@
     <string name="pref_tools_summary">درون‌ریزی/برون‌ریزی، اشکال زدایی</string>
     <string name="pref_experimental">آزمایشی</string>
     <string name="pref_experimental_summary">چیزهای اضافی</string>
-    <string name="pref_gesture_action_none">هیچ</string>
+    <string name="title_none">هیچ</string>
     <string name="pref_gesture_action_left_click">کلیک-چپ</string>
     <string name="pref_gesture_action_middle_click">کلیک-وسط</string>
     <string name="pref_gesture_action_right_click">کلیک-راست</string>
@@ -123,7 +122,6 @@
     <string name="pref_long_press">فشار طولانی</string>
     <string name="pref_swipe1">سُر دادن یک-انگشت</string>
     <string name="pref_swipe2">سُر دادن دو-انگشت</string>
-    <string name="pref_drag">کشیدن (فشار طولانی و سُر دادن)</string>
     <string name="pref_mouse">ماوس</string>
     <string name="pref_mouse_passthrough">عبور ماوس</string>
     <string name="pref_mouse_passthrough_summary_off">رویدادهای ماوس برای حرکات محلّی استفاده شوند</string>
@@ -145,37 +143,32 @@
     <string name="pref_zoom_min">کمینه</string>
     <string name="pref_zoom_max">بیشینه</string>
     <string name="pref_clipboard_sync">همگام‌سازی تخته‌گیره</string>
-    <string name="pref_credential">ورود</string>
-    <string name="pref_cred_autocomplete">تکمیل خودکار</string>
-    <string name="pref_cred_autocomplete_summary">هنگام اتّصال به کارسازهای جدید، ورودهای ذخیره شده را پیشنهاد می‌دهد</string>
     <string name="pref_discovery">اکتشاف</string>
     <string name="pref_import_export">درون‌ریزی/برون‌ریزی کارسازها</string>
     <string name="pref_debugging">اشکال زدایی</string>
     <string name="pref_logs">گزارشات</string>
     <string name="pref_keycode_map">نقشهٔ کد کلید</string>
-    <string name="pref_experimental_toolbar_swipe_close">برای بستن کشوی نوار ابزار، انگشت خود را بکشید</string>
-    <string name="pref_experimental_toolbar_swipe_close_summary">در طول یک جلسهٔ از راه دور، می‌توانید برای بستن نوار ابزار در حال حاضر باز، انگشت خود را بکشید</string>
-    <string name="pref_experimental_immersive_mode">حالت کاملاً فراگیر</string>
-    <string name="pref_experimental_immersive_mode_summary">تمام نوارهای سامانه را در حالت تمام صفحه پنهان می‌کند</string>
     <string name="title_clear">پاک‌کردن</string>
     <string name="pref_theme_option_light">روشن</string>
     <string name="pref_toolbar_alignment_option_end">پایان</string>
     <string name="pref_theme_option_system">سامانه</string>
     <string name="pref_theme_option_dark">تاریک</string>
     <string name="pref_toolbar_alignment_option_start">شروع</string>
-    <string name="pref_direct_touch">لمس مستقیم</string>
-    <string name="pref_direct_touch_summary_on">در جای لمس شده کنش کن</string>
-    <string name="pref_direct_touch_summary_off">در جای اشاره‌گر کنش کن</string>
+    <string name="pref_gesture_style_touchscreen_summary">در جای لمس شده کنش کن</string>
+    <string name="pref_gesture_style_touchpad_summary">در جای اشاره‌گر کنش کن</string>
     <string name="pref_mouse_back">دکمهٔ بازگشت</string>
     <string name="pref_mouse_back_action_default">پیش‌گزیده</string>
-    <string name="pref_mouse_back_action_right">کلیک راست</string>
-    <string name="pref_mouse_back_action_middle">کلیک وسط</string>
     <string name="pref_discovery_autorun">اجرای خودکار</string>
     <string name="pref_rediscovery_indicator">کارسازهای کشف شده را برجسته کن</string>
     <string name="pref_swipe_sensitivity">حساسیت به کشیدن</string>
     <string name="desc_discovery_stop_btn">اکتشاف کارسازها را متوقّف کن</string>
     <string name="pref_discovery_autorun_summary">در حالی که در صفحهٔ اصلی هستید، کارسازها را کشف کنید</string>
-    <string name="title_default_security">امنیت پیش‌گزیده</string>
-    <string name="msg_hide_remote_pointer_option_moved">«پنهان کردن اشاره‌گر دوردست» حالا در مسیر
-\n«تنظیمات ← ورودی ← ماوس» در دسترس است</string>
+    <string name="msg_drag_gesture_help">اختصاص دادن یک کنش به حرکت کشیدن، تشخیص فشار طولانی را تغییر می‌دهد:
+\n
+\n<b>فشار طولانی و رها کردن</b> ← فشار طولانی
+\n<b>فشار طولانی و سُر دادن</b> ← کشیدن</string>
+    <string name="pref_orientation_option_auto">خودکار</string>
+    <string name="pref_orientation_option_landscape">افقی</string>
+    <string name="pref_orientation_option_portrait">عمودی</string>
+    <string name="pref_orientation">جهت صفحه نمایش</string>
 </resources>

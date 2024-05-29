@@ -7,25 +7,23 @@
   -->
 
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
-    package="com.gaurav.avnc">
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
     <application
         android:name=".App"
-        android:allowBackup="true"
-        android:fullBackupContent="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/AppTheme">
+        android:theme="@style/App.Theme">
 
         <activity-alias
             android:name=".StartupActivity"
             android:exported="true"
-            android:targetActivity=".ui.home.SplashActivity">
+            android:targetActivity=".ui.home.HomeActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -35,7 +33,7 @@
         <activity-alias
             android:name=".UriReceiverActivity"
             android:exported="true"
-            android:targetActivity=".ui.vnc.UriReceiverActivity">
+            android:targetActivity=".ui.vnc.IntentReceiverActivity">
 
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -48,10 +46,8 @@
         </activity-alias>
 
         <activity
-            android:name=".ui.home.SplashActivity"
-            android:theme="@style/SplashTheme" />
-
-        <activity android:name=".ui.home.HomeActivity" />
+            android:name=".ui.home.HomeActivity"
+            android:theme="@style/App.SplashTheme.Dark" />
 
         <activity
             android:name=".ui.home.UrlBarActivity"
@@ -65,7 +61,9 @@
             android:supportsPictureInPicture="true"
             tools:ignore="UnusedAttribute" />
 
-        <activity android:name=".ui.vnc.UriReceiverActivity" />
+        <activity
+            android:name=".ui.vnc.IntentReceiverActivity"
+            android:theme="@style/App.SplashTheme.Dark" />
 
         <activity android:name=".ui.prefs.PrefsActivity" />
 

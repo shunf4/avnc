@@ -14,43 +14,67 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
-import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
+import android.os.Parcelable
+import android.os.SystemClock
 import android.util.Log
 import android.util.Rational
-import android.view.*
+import android.view.InputDevice
+import android.view.KeyEvent
+import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
+import android.widget.Toast
 import androidx.activity.viewModels
+import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.view.updatePadding
+import androidx.core.os.BundleCompat
+import androidx.core.view.isVisible
 import androidx.databinding.DataBindingUtil
-import androidx.drawerlayout.widget.DrawerLayout
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import com.gaurav.avnc.R
 import com.gaurav.avnc.databinding.ActivityVncBinding
 import com.gaurav.avnc.model.ServerProfile
-import com.gaurav.avnc.util.Experimental
+import com.gaurav.avnc.util.DeviceAuthPrompt
 import com.gaurav.avnc.util.SamsungDex
 import com.gaurav.avnc.viewmodel.VncViewModel
+import com.gaurav.avnc.viewmodel.VncViewModel.State.Companion.isConnected
+import com.gaurav.avnc.viewmodel.VncViewModel.State.Companion.isDisconnected
 import com.gaurav.avnc.vnc.VncUri
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.parcelize.Parcelize
 import java.lang.ref.WeakReference
 
 /********** [VncActivity] startup helpers *********************************/
 
 private const val PROFILE_KEY = "com.gaurav.avnc.server_profile"
+private const val FRAME_STATE_KEY = "com.gaurav.avnc.frame_state"
+
+fun createVncIntent(context: Context, profile: ServerProfile): Intent {
+    return Intent(context, VncActivity::class.java).apply {
+        putExtra(PROFILE_KEY, profile)
+    }
+}
 
 fun startVncActivity(source: Activity, profile: ServerProfile) {
-    val intent = Intent(source, VncActivity::class.java)
-    intent.putExtra(PROFILE_KEY, profile)
-    source.startActivity(intent)
+    source.startActivity(createVncIntent(source, profile))
 }
 
 fun startVncActivity(source: Activity, uri: VncUri) {
     startVncActivity(source, uri.toServerProfile())
 }
 
+@Parcelize
+private data class SavedFrameState(val frameX: Float, val frameY: Float, val zoom1: Float, val zoom2: Float) : Parcelable
+
+private fun startVncActivity(source: Activity, profile: ServerProfile, frameState: SavedFrameState) {
+    source.startActivity(createVncIntent(source, profile).also { it.putExtra(FRAME_STATE_KEY, frameState) })
+}
 /**************************************************************************/
 
 
@@ -59,84 +83,130 @@ fun startVncActivity(source: Activity, uri: VncUri) {
  */
 class VncActivity : AppCompatActivity() {
 
-    private val profile by lazy { loadProfile() }
-    val viewModel by viewModels<VncViewModel>()
+    lateinit var viewModel: VncViewModel
     lateinit var binding: ActivityVncBinding
     private val dispatcher by lazy { Dispatcher(this) }
     val touchHandler by lazy { TouchHandler(viewModel, dispatcher) }
-    val keyHandler by lazy { KeyHandler(dispatcher, profile.keyCompatMode, viewModel.pref) }
-    private val virtualKeys by lazy { VirtualKeys(this) }
+    val keyHandler by lazy { KeyHandler(dispatcher, viewModel.profile.fLegacyKeySym, viewModel.pref) }
+    val virtualKeys by lazy { VirtualKeys(this) }
+    private val serverUnlockPrompt = DeviceAuthPrompt(this)
+    private val layoutManager by lazy { LayoutManager(this) }
+    private val toolbar by lazy { Toolbar(this, dispatcher) }
+    private var restoredFromBundle = false
+    private var wasConnectedWhenStopped = false
+    private var onStartTime = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        DeviceAuthPrompt.applyFingerprintDialogFix(supportFragmentManager)
+
         super.onCreate(savedInstanceState)
+        if (!loadViewModel(savedInstanceState)) {
+            finish()
+            return
+        }
+
+        viewModel.initConnection()
+
+        //Main UI
         binding = DataBindingUtil.setContentView(this, R.layout.activity_vnc)
         binding.viewModel = viewModel
         binding.lifecycleOwner = this
+        binding.frameView.initialize(this)
+        viewModel.frameViewRef = WeakReference(binding.frameView)
+        toolbar.initialize()
 
         setupLayout()
+        setupServerUnlock()
 
-        binding.frameView.initialize(this)
-        binding.retryConnectionBtn.setOnClickListener { retryConnection() }
-
-        //Drawers
-        setupDrawerLayout()
-        binding.keyboardBtn.setOnClickListener { showKeyboard(); closeDrawers() }
-        binding.zoomResetBtn.setOnClickListener { viewModel.resetZoom(); closeDrawers() }
-        binding.virtualKeysBtn.setOnClickListener { virtualKeys.show(); closeDrawers() }
-
-        //ViewModel setup
-        viewModel.frameViewRef = WeakReference(binding.frameView)
-        viewModel.credentialRequest.observe(this) { showCredentialDialog() }
+        //Observers
+        binding.reconnectBtn.setOnClickListener { retryConnection() }
+        viewModel.loginInfoRequest.observe(this) { showLoginDialog() }
         viewModel.sshHostKeyVerifyRequest.observe(this) { showHostKeyDialog() }
         viewModel.state.observe(this) { onClientStateChanged(it) }
-        viewModel.initConnection(profile) //Should be called after observers has been setup
-    }
 
-    override fun onResume() {
-        super.onResume()
-        viewModel.sendClipboardText()
+        savedInstanceState?.let {
+            restoredFromBundle = true
+            wasConnectedWhenStopped = it.getBoolean("wasConnectedWhenStopped")
+        }
     }
 
     override fun onStart() {
         super.onStart()
         binding.frameView.onResume()
+        viewModel.resumeFrameBufferUpdates()
+        onStartTime = SystemClock.uptimeMillis()
+
+        // Refresh framebuffer on activity restart:
+        // - It forces read/write on the socket. This allows us to verify the socket, which might have
+        //   been closed by the server while app process was frozen in background
+        // - It also attempts to fix some unusual cases of old updates requests being lost while AVNC
+        //   was frozen by the system
+        if (wasConnectedWhenStopped) viewModel.refreshFrameBuffer()
     }
 
     override fun onStop() {
         super.onStop()
-
-        cleanUp()
-
-        binding.frameView.onPause()
-    }
-
-    private fun cleanUp() {
         virtualKeys.releaseMetaKeys()
+        binding.frameView.onPause()
+        viewModel.pauseFrameBufferUpdates()
+        wasConnectedWhenStopped = viewModel.state.value.isConnected
     }
 
-    private fun loadProfile(): ServerProfile {
-        val profile = intent.getParcelableExtra<ServerProfile>(PROFILE_KEY)
-        if (profile != null) {
-            // Make a copy to avoid modifying intent's instance,
-            // because we may need the original if we have to retry connection.
-            return profile.copy()
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putParcelable(PROFILE_KEY, viewModel.profile)
+        outState.putBoolean("wasConnectedWhenStopped", wasConnectedWhenStopped || viewModel.state.value.isConnected)
+    }
+
+    private fun loadViewModel(savedState: Bundle?): Boolean {
+        @Suppress("DEPRECATION")
+        val profile = savedState?.getParcelable(PROFILE_KEY)
+                      ?: intent.getParcelableExtra<ServerProfile?>(PROFILE_KEY)
+
+        if (profile == null) {
+            Toast.makeText(this, "Error: Missing Server Info", Toast.LENGTH_LONG).show()
+            return false
         }
 
-        Log.e(javaClass.simpleName, "No connection information was passed through Intent.")
-        return ServerProfile()
+        val factory = viewModelFactory { initializer { VncViewModel(profile, application) } }
+        viewModel = viewModels<VncViewModel> { factory }.value
+        return true
     }
 
-    private fun retryConnection() {
+    private fun retryConnection(seamless: Boolean = false) {
         //We simply create a new activity to force creation of new ViewModel
         //which effectively restarts the connection.
         if (!isFinishing) {
-            startActivity(intent)
+            val savedFrameState = viewModel.frameState.let {
+                SavedFrameState(frameX = it.frameX, frameY = it.frameY, zoom1 = it.zoomScale1, zoom2 = it.zoomScale2)
+            }
+
+            startVncActivity(this, viewModel.profile, savedFrameState)
+
+            if (seamless) {
+                @Suppress("DEPRECATION")
+                overridePendingTransition(0, 0)
+            }
             finish()
         }
     }
 
-    private fun showCredentialDialog() {
-        CredentialFragment().show(supportFragmentManager, "CredentialDialog")
+    private fun setupServerUnlock() {
+        serverUnlockPrompt.init(
+                onSuccess = { viewModel.serverUnlockRequest.offerResponse(true) },
+                onFail = { viewModel.serverUnlockRequest.offerResponse(false) }
+        )
+
+        viewModel.serverUnlockRequest.observe(this) {
+            if (serverUnlockPrompt.canLaunch())
+                serverUnlockPrompt.launch(getString(R.string.title_unlock_dialog))
+            else
+                viewModel.serverUnlockRequest.offerResponse(true)
+        }
+    }
+
+    private fun showLoginDialog() {
+        LoginFragment().show(supportFragmentManager, "LoginDialog")
     }
 
     private fun showHostKeyDialog() {
@@ -152,125 +222,105 @@ class VncActivity : AppCompatActivity() {
         virtualKeys.onKeyboardOpen()
     }
 
-    private fun closeDrawers() = binding.drawerLayout.closeDrawers()
-
     private fun onClientStateChanged(newState: VncViewModel.State) {
-        if (newState == VncViewModel.State.Connected) {
+        val isConnected = newState.isConnected
 
-            if (!viewModel.pref.runInfo.hasConnectedSuccessfully) {
-                viewModel.pref.runInfo.hasConnectedSuccessfully = true
+        binding.frameView.isVisible = isConnected
+        binding.frameView.keepScreenOn = isConnected && viewModel.pref.viewer.keepScreenOn
+        SamsungDex.setMetaKeyCapture(this, isConnected)
+        layoutManager.onConnectionStateChanged()
+        updateStatusContainerVisibility(isConnected)
+        autoReconnect(newState)
 
-                // Highlight drawer for first time users
-                binding.drawerLayout.open()
-                lifecycleScope.launchWhenCreated {
-                    delay(1500)
-                    binding.drawerLayout.close()
-                }
+        if (isConnected)
+            ViewerHelp().onConnected(this)
+
+        if (isConnected && !restoredFromBundle) {
+            incrementUseCount()
+            restoreFrameState()
+        }
+    }
+
+    private fun incrementUseCount() {
+        viewModel.profile.useCount += 1
+        viewModel.saveProfile()
+    }
+
+    private fun updateStatusContainerVisibility(isConnected: Boolean) {
+        binding.statusContainer.isVisible = true
+        binding.statusContainer
+                .animate()
+                .alpha(if (isConnected) 0f else 1f)
+                .withEndAction { binding.statusContainer.isVisible = !isConnected }
+    }
+
+    private fun restoreFrameState() {
+        intent.extras?.let { extras ->
+            BundleCompat.getParcelable(extras, FRAME_STATE_KEY, SavedFrameState::class.java)?.let {
+                viewModel.setZoom(it.zoom1, it.zoom2)
+                viewModel.panFrame(it.frameX, it.frameY)
             }
+        }
+    }
 
-            SamsungDex.setMetaKeyCapture(this, true)
-        } else {
-            SamsungDex.setMetaKeyCapture(this, false)
+    private var autoReconnecting = false
+    private fun autoReconnect(state: VncViewModel.State) {
+        if (!state.isDisconnected)
+            return
+
+        // If disconnected when coming back from background, try to reconnect immediately
+        if (wasConnectedWhenStopped && (SystemClock.uptimeMillis() - onStartTime) in 0..2000) {
+            Log.d(javaClass.simpleName, "Disconnected while in background, reconnecting ...")
+            retryConnection(true)
         }
 
-        updateSystemUiVisibility()
+        if (autoReconnecting || !viewModel.pref.server.autoReconnect)
+            return
+
+        autoReconnecting = true
+        lifecycleScope.launch {
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                val timeout = 5 //seconds, must be >1
+                repeat(timeout) {
+                    binding.autoReconnectProgress.setProgressCompat((100 * it) / (timeout - 1), true)
+                    delay(1000)
+                    if (it >= (timeout - 1))
+                        retryConnection()
+                }
+            }
+        }
     }
 
     /************************************************************************************
      * Layout handling.
      ************************************************************************************/
-
-    private val fullscreenMode by lazy { viewModel.pref.viewer.fullscreen }
-    private val immersiveMode by lazy { viewModel.pref.experimental.immersiveMode }
-
     private fun setupLayout() {
-
         setupOrientation()
+        layoutManager.initialize()
 
-        @Suppress("DEPRECATION")
-        if (fullscreenMode) {
-            window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
-            window.decorView.setOnSystemUiVisibilityChangeListener { updateSystemUiVisibility() }
-        }
-
-        binding.root.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
-            viewModel.frameState.setWindowSize(v.width.toFloat(), v.height.toFloat())
-        }
-
-        //This is used to handle cases where a system view (e.g. soft keyboard) is covering
-        //some part of our window. We retrieve the visible area and add padding to our
-        //root view so that its content is resized to that area.
-        //This will trigger the resize of frame view allowing it to handle the available space.
-        val visibleFrame = Rect()
-        val rootLocation = intArrayOf(0, 0)
-        binding.root.viewTreeObserver.addOnGlobalLayoutListener {
-            binding.root.getWindowVisibleDisplayFrame(visibleFrame)
-
-            // Normally, the root view will cover the whole screen, but on devices
-            // with display-cutout it will be letter-boxed by the system.
-            // In that case the root view won't start from (0,0).
-            // So we have to offset the visibleFame (which is in display coordinates)
-            // to make sure it is relative to our root view.
-            binding.root.getLocationOnScreen(rootLocation)
-            visibleFrame.offset(-rootLocation[0], -rootLocation[1])
-
-            var paddingBottom = binding.root.bottom - visibleFrame.bottom
-            if (paddingBottom < 0)
-                paddingBottom = 0
-
-            //Try to guess if keyboard is closing
-            if (paddingBottom == 0 && binding.root.paddingBottom != 0)
-                virtualKeys.onKeyboardClose()
-
-            binding.root.updatePadding(bottom = paddingBottom)
+        if (Build.VERSION.SDK_INT >= 28 && viewModel.pref.viewer.drawBehindCutout) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
         }
     }
 
     private fun setupOrientation() {
-        requestedOrientation = when (viewModel.pref.viewer.orientation) {
+        val choice = viewModel.profile.screenOrientation.let {
+            if (it != "auto") it else viewModel.pref.viewer.orientation
+        }
+
+        requestedOrientation = when (choice) {
             "portrait" -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
             "landscape" -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
 
-    private fun setupDrawerLayout() {
-        binding.drawerLayout.setScrimColor(0)
-
-        // Update Toolbar gravity
-        val gravityH = if (viewModel.pref.viewer.toolbarAlignment == "start") Gravity.START else Gravity.END
-
-        val lp = binding.primaryToolbar.layoutParams as DrawerLayout.LayoutParams
-        lp.gravity = gravityH or Gravity.CENTER_VERTICAL
-        binding.primaryToolbar.layoutParams = lp
-
-        if (viewModel.pref.experimental.swipeCloseToolbar)
-            Experimental.setupDrawerCloseOnScrimSwipe(binding.drawerLayout, gravityH)
-    }
-
-
-    @Suppress("DEPRECATION")
-    private fun updateSystemUiVisibility() {
-        if (!fullscreenMode || !immersiveMode)
-            return
-
-        val flags = View.SYSTEM_UI_FLAG_FULLSCREEN or
-                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
-                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
-                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-
-        window.decorView.apply {
-            if (viewModel.client.connected)
-                systemUiVisibility = systemUiVisibility or flags
-            else
-                systemUiVisibility = systemUiVisibility and flags.inv()
-        }
-    }
-
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) updateSystemUiVisibility()
+        layoutManager.onWindowFocusChanged(hasFocus)
+        if (hasFocus) viewModel.sendClipboardText()
     }
 
 
@@ -283,10 +333,11 @@ class VncActivity : AppCompatActivity() {
         enterPiPMode()
     }
 
-    override fun onPictureInPictureModeChanged(inPiP: Boolean, newConfig: Configuration?) {
+    @RequiresApi(26)
+    override fun onPictureInPictureModeChanged(inPiP: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(inPiP, newConfig)
         if (inPiP) {
-            closeDrawers()
+            toolbar.close()
             viewModel.resetZoom()
             virtualKeys.hide()
         }
@@ -297,8 +348,16 @@ class VncActivity : AppCompatActivity() {
 
         if (canEnter && Build.VERSION.SDK_INT >= 26) {
 
-            val fs = viewModel.frameState
-            val aspectRatio = Rational(fs.fbWidth.toInt(), fs.fbHeight.toInt())
+            var w = viewModel.frameState.fbWidth
+            var h = viewModel.frameState.fbHeight
+            if (w <= 0 || h <= 0)
+                return
+
+            // Android require aspect ratio to be less than 2.39
+            w = w.coerceIn(1f, 2.3f * h)
+            h = h.coerceIn(1f, 2.3f * w)
+
+            val aspectRatio = Rational(w.toInt(), h.toInt())
             val param = PictureInPictureParams.Builder().setAspectRatio(aspectRatio).build()
 
             try {
@@ -333,12 +392,13 @@ class VncActivity : AppCompatActivity() {
         //giving apps a chance to handle it. For better or worse, they set the 'source'
         //for such key events to Mouse, enabling the following workarounds.
 
-        /**
-         * shunf4 mod: On Onyx BOOX devices, [InputDevice.getDevice] sometimes returns null.
-         */
+        
         val dev : InputDevice? = InputDevice.getDevice(keyEvent.deviceId)
         if (keyEvent.keyCode == KeyEvent.KEYCODE_BACK &&
-            dev != null && dev.supportsSource(InputDevice.SOURCE_MOUSE) &&
+            /**
+            * shunf4 comment: On Onyx BOOX devices, [InputDevice.getDevice] sometimes returns null.
+            */
+            InputDevice.getDevice(keyEvent.deviceId)?.supportsSource(InputDevice.SOURCE_MOUSE) == true &&
             viewModel.pref.input.interceptMouseBack) {
             if (keyEvent.action == KeyEvent.ACTION_DOWN)
                 touchHandler.onMouseBack()

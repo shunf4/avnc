@@ -33,15 +33,14 @@
 
     <FrameLayout
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:animateLayoutChanges="true">
+        android:layout_height="match_parent">
 
 
         <androidx.drawerlayout.widget.DrawerLayout
             android:id="@+id/drawer_layout"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            app:isVisible="@{viewModel.state == State.Connected}">
+            app:scrimColor="@{0}">
 
 
             <!--FrameView-->
@@ -51,38 +50,15 @@
                 android:layout_height="match_parent"
                 android:background="@drawable/bg_frame_view"
                 android:focusable="true"
-                android:focusableInTouchMode="true"
-                android:keepScreenOn="true" />
+                android:focusableInTouchMode="true" />
 
+            <!--A View containing helpful tips will be dynamically inserted here for new users -->
 
-            <!--Drawers-->
-            <LinearLayout
-                android:id="@+id/primary_toolbar"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="start|center_vertical"
-                android:background="@drawable/bg_round_rect"
-                android:orientation="vertical">
-
-                <ImageButton
-                    android:id="@+id/keyboard_btn"
-                    style="@style/ImageButton"
-                    android:contentDescription="@string/desc_keyboard_btn"
-                    android:src="@drawable/ic_keyboard" />
-
-                <ImageButton
-                    android:id="@+id/virtual_keys_btn"
-                    style="@style/ImageButton"
-                    android:contentDescription="@string/desc_virtual_keys_btn"
-                    android:src="@drawable/ic_keyboard_mini" />
-
-                <ImageButton
-                    android:id="@+id/zoom_reset_btn"
-                    style="@style/ImageButton"
-                    android:contentDescription="@string/desc_reset_zoom_btn"
-                    android:src="@drawable/ic_zoom_reset" />
-
-            </LinearLayout>
+            <!--Drawer-->
+            <include
+                android:id="@+id/toolbar"
+                layout="@layout/toolbar_drawer"
+                app:viewModel="@{viewModel}" />
 
         </androidx.drawerlayout.widget.DrawerLayout>
 
@@ -96,10 +72,10 @@
 
         <!--Status-->
         <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/status_container"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:background="?colorSurface"
-            app:isVisible="@{viewModel.state != State.Connected}">
+            android:background="?colorSurface">
 
             <ProgressBar
                 style="@style/Widget.AppCompat.ProgressBar"
@@ -151,7 +127,7 @@
                 tools:text="( Connection refused! Server may be down or running on different port )" />
 
             <ImageButton
-                android:id="@+id/retry_connection_btn"
+                android:id="@+id/reconnect_btn"
                 style="@style/ImageButton"
                 android:background="@drawable/bg_circular_button"
                 android:contentDescription="@string/desc_retry_connection_btn"
@@ -161,6 +137,20 @@
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toBottomOf="@id/disconnect_reason" />
+
+            <com.google.android.material.progressindicator.CircularProgressIndicator
+                android:id="@+id/auto_reconnect_progress"
+                style="@style/Widget.MaterialComponents.CircularProgressIndicator"
+                android:layout_width="@dimen/action_btn_size"
+                android:layout_height="@dimen/action_btn_size"
+                app:indicatorColor="?colorSecondary"
+                app:indicatorInset="0dp"
+                app:indicatorSize="@dimen/action_btn_size"
+                app:isVisible="@{viewModel.state == State.Disconnected &amp;&amp; viewModel.pref.server.autoReconnect}"
+                app:layout_constraintStart_toStartOf="@id/reconnect_btn"
+                app:layout_constraintTop_toTopOf="@id/reconnect_btn"
+                app:trackThickness="1dp"
+                tools:progress="50" />
 
         </androidx.constraintlayout.widget.ConstraintLayout>
 

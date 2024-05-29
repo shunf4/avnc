@@ -46,7 +46,6 @@ import com.gaurav.avnc.vnc.VncClient
  */
 class FrameView(context: Context?, attrs: AttributeSet? = null) : GLSurfaceView(context, attrs) {
 
-    private lateinit var frameState: FrameState
     private lateinit var touchHandler: TouchHandler
     private lateinit var keyHandler: KeyHandler
 
@@ -54,6 +53,10 @@ class FrameView(context: Context?, attrs: AttributeSet? = null) : GLSurfaceView(
      * Input connection used for intercepting key events
      */
     inner class InputConnection : BaseInputConnection(this, false) {
+        override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean {
+            return keyHandler.onCommitText(text) || super.commitText(text, newCursorPosition)
+        }
+
         override fun sendKeyEvent(event: KeyEvent): Boolean {
             return keyHandler.onKeyEvent(event) || super.sendKeyEvent(event)
         }
@@ -65,7 +68,6 @@ class FrameView(context: Context?, attrs: AttributeSet? = null) : GLSurfaceView(
     fun initialize(activity: VncActivity) {
         val viewModel = activity.viewModel
 
-        frameState = viewModel.frameState
         touchHandler = activity.touchHandler
         keyHandler = activity.keyHandler
 
@@ -78,16 +80,15 @@ class FrameView(context: Context?, attrs: AttributeSet? = null) : GLSurfaceView(
             pointerIcon = PointerIcon.getSystemIcon(context, PointerIcon.TYPE_NULL)
     }
 
-    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        super.onSizeChanged(w, h, oldw, oldh)
-        frameState.setViewportSize(w.toFloat(), h.toFloat())
-    }
-
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
         outAttrs.imeOptions = outAttrs.imeOptions or
                 EditorInfo.IME_FLAG_NO_EXTRACT_UI or
                 EditorInfo.IME_FLAG_NO_FULLSCREEN
         return InputConnection()
+    }
+
+    override fun onCheckIsTextEditor(): Boolean {
+        return true
     }
 
     @SuppressLint("ClickableViewAccessibility")

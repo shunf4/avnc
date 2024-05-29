@@ -1,24 +1,13 @@
 -dontobfuscate
 -keepattributes SourceFile,LineNumberTable
 
-##########################################################################
-# Rules for keeping JSON Serialization code
-# Ref: https://github.com/Kotlin/kotlinx.serialization#android
-##########################################################################
+# These are mainly needed in full R8 mode, but Connectbot uses these by default
+# so we keep these to avoid any breakage.
+-keepattributes InnerClasses
+-keep public class com.trilead.ssh2.compression.**
+-keep public class com.trilead.ssh2.crypto.**
 
--keepattributes *Annotation*, InnerClasses
 
--keepclassmembers class kotlinx.serialization.json.** {
-    *** Companion;
-}
--keepclasseswithmembers class kotlinx.serialization.json.** {
-    kotlinx.serialization.KSerializer serializer(...);
-}
-
--keep,includedescriptorclasses class com.gaurav.avnc.**$$serializer { *; }
--keepclassmembers class com.gaurav.avnc.** {
-    *** Companion;
-}
--keepclasseswithmembers class com.gaurav.avnc.** {
-    kotlinx.serialization.KSerializer serializer(...);
-}
+# Needed to keep R8 happy about Tink library (used by sshlib)
+-dontwarn com.google.errorprone.annotations.Immutable
+-dontwarn com.google.errorprone.annotations.CanIgnoreReturnValue

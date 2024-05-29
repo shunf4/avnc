@@ -9,10 +9,13 @@
 package com.gaurav.avnc.model
 
 import android.os.Parcelable
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import kotlinx.parcelize.IgnoredOnParcel
 import kotlinx.parcelize.Parcelize
 import kotlinx.serialization.Serializable
+import kotlin.reflect.KProperty
 
 /**
  * This class holds connection configuration of a remote VNC server.
@@ -76,7 +79,27 @@ data class ServerProfile(
          * Specifies the image quality of the frames.
          * This mainly affects the compression level used by some encodings.
          */
-        var imageQuality: Int = 0,
+        var imageQuality: Int = 5,
+
+        /**
+         * Use raw encoding for framebuffer.
+         * This can improve performance when server is running on localhost.
+         */
+        @ColumnInfo(defaultValue = "0")
+        var useRawEncoding: Boolean = false,
+
+        /**
+         * Initial zoom for the viewer.
+         * This will be used in portrait orientation, or when per-orientation zooming is disabled.
+         */
+        @ColumnInfo(defaultValue = "1.0")
+        var zoom1: Float = 1f,
+
+        /**
+         * This will be used in landscape orientation if per-orientation zooming is enabled.
+         */
+        @ColumnInfo(defaultValue = "1.0")
+        var zoom2: Float = 1f,
 
         /**
          * Specifies whether 'View Only' mode should be used.
@@ -87,15 +110,42 @@ data class ServerProfile(
         /**
          * Whether the cursor should be drawn by client instead of server.
          * It's value is currently ignored, and hardcoded to true.
-         * See [com.gaurav.avnc.viewmodel.VncViewModel.configureClient]
+         * See [com.gaurav.avnc.viewmodel.VncViewModel.preConnect]
          */
         var useLocalCursor: Boolean = true,
 
         /**
-         * Compatibility mode for key events.
-         * If enabled, we will try to emit legacy X KeySym events.
+         * Server type hint received from user, e.g. tigervnc, tightvnc, vino
+         * Can be used in future to handle known server quirks.
          */
-        var keyCompatMode: Boolean = true,
+        @ColumnInfo(defaultValue = "")
+        var serverTypeHint: String = "",
+
+        /**
+         * Composite field for various flags.
+         * This is accessed via individual members like [fLegacyKeySym].
+         */
+        var flags: Long = FLAG_LEGACY_KEYSYM,
+
+        /**
+         * Preferred style to use for gesture handling.
+         * Possible values: auto, touchscreen, touchpad
+         */
+        @ColumnInfo(defaultValue = "auto")
+        var gestureStyle: String = "auto",
+
+        /**
+         * Preferred screen orientation.
+         * Possible values: auto, portrait, landscape
+         */
+        @ColumnInfo(defaultValue = "auto")
+        var screenOrientation: String = "auto",
+
+        /**
+         * Usage count tracks how many times user has connected to a server.
+         * Can be used to put frequent servers on top.
+         */
+        var useCount: Int = 0,
 
         /**
          * Whether UltraVNC Repeater is used for connections.
@@ -108,6 +158,12 @@ data class ServerProfile(
          * Valid IDs: [0, 999999999].
          */
         var idOnRepeater: Int = 0,
+
+        /**
+         * Resize remote desktop to match with local window size.
+         */
+        @ColumnInfo(defaultValue = "0")
+        var resizeRemoteDesktop: Boolean = false,
 
         /**
          * These values are used for SSH Tunnel
@@ -130,5 +186,46 @@ data class ServerProfile(
         // SSH auth types
         const val SSH_AUTH_KEY = 1
         const val SSH_AUTH_PASSWORD = 2
+
+        // Flag masks
+        private const val FLAG_LEGACY_KEYSYM = 0x01L
+        private const val FLAG_BUTTON_UP_DELAY = 0x02L
+        private const val FLAG_ZOOM_LOCKED = 0x04L
+        const val FLAG_CONNECT_ON_APP_START = 0x08L
     }
+
+    /**
+     * Delegated property builder for [flags] field.
+     */
+    private class Flag(val flag: Long) {
+        operator fun getValue(p: ServerProfile, kp: KProperty<*>) = (p.flags and flag) != 0L
+        operator fun setValue(p: ServerProfile, kp: KProperty<*>, value: Boolean) {
+            p.flags = if (value) p.flags or flag else p.flags and flag.inv()
+        }
+    }
+
+    /**
+     * Flag to emit legacy X KeySym events in certain cases.
+     */
+    @IgnoredOnParcel
+    var fLegacyKeySym by Flag(FLAG_LEGACY_KEYSYM)
+
+    /**
+     * Flag to insert artificial delay before UP event of left-click.
+     */
+    @IgnoredOnParcel
+    var fButtonUpDelay by Flag(FLAG_BUTTON_UP_DELAY)
+
+    /**
+     * If zoom is locked, user requests to change [zoom1] & [zoom2]
+     * should be ignored.
+     */
+    @IgnoredOnParcel
+    var fZoomLocked by Flag(FLAG_ZOOM_LOCKED)
+
+    /**
+     * Try to automatically connect to this server when app starts.
+     */
+    @IgnoredOnParcel
+    var fConnectOnAppStart by Flag(FLAG_CONNECT_ON_APP_START)
 }

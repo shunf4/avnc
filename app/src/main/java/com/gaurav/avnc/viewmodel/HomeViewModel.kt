@@ -11,9 +11,10 @@ package com.gaurav.avnc.viewmodel
 import android.app.Application
 import androidx.lifecycle.MediatorLiveData
 import androidx.lifecycle.MutableLiveData
-import androidx.lifecycle.Transformations
+import androidx.lifecycle.switchMap
 import com.gaurav.avnc.model.ServerProfile
-import com.gaurav.avnc.vnc.Discovery
+import com.gaurav.avnc.util.LiveEvent
+import com.gaurav.avnc.viewmodel.service.Discovery
 
 class HomeViewModel(app: Application) : BaseViewModel(app) {
 
@@ -22,16 +23,16 @@ class HomeViewModel(app: Application) : BaseViewModel(app) {
      * Depending on the user pref, this list may be sorted by server name.
      */
     val serverProfiles by lazy {
-        Transformations.switchMap(pref.ui.sortServerList) {
+        pref.ui.sortServerList.switchMap {
             if (it) serverProfileDao.getSortedLiveList()
             else serverProfileDao.getLiveList()
-        }!!
+        }
     }
 
     /**
      * Used to find new servers.
      */
-    val discovery by lazy { Discovery(app) }
+    val discovery = Discovery
 
     /**
      * Used for starting new VNC connections.
@@ -61,6 +62,10 @@ class HomeViewModel(app: Application) : BaseViewModel(app) {
      */
     fun startConnection(profile: ServerProfile) = newConnectionEvent.fire(profile)
 
+    fun maybeConnectOnAppStart() = launch {
+        serverProfileDao.getConnectableOnAppStart().firstOrNull()?.let { startConnection(it) }
+    }
+
     /**************************************************************************
      * Server Discovery
      *
@@ -70,7 +75,7 @@ class HomeViewModel(app: Application) : BaseViewModel(app) {
 
     fun startDiscovery() {
         autoStopped = false
-        discovery.start()
+        discovery.start(app)
     }
 
     fun stopDiscovery() {
@@ -117,15 +122,24 @@ class HomeViewModel(app: Application) : BaseViewModel(app) {
      * These operations are asynchronous.
      **************************************************************************/
 
-    fun insertProfile(profile: ServerProfile) = asyncIO({ serverProfileDao.insert(profile) }, {
+    fun insertProfile(profile: ServerProfile) = launch {
+        serverProfileDao.insert(profile)
         profileInsertedEvent.fire(profile)
-    })
+    }
 
-    fun updateProfile(profile: ServerProfile) = asyncIO { serverProfileDao.update(profile) }
-    fun deleteProfile(profile: ServerProfile) = asyncIO({ serverProfileDao.delete(profile) }, {
+    fun updateProfile(profile: ServerProfile) = launch {
+        serverProfileDao.update(profile)
+    }
+
+    fun deleteProfile(profile: ServerProfile) = launch {
+        serverProfileDao.delete(profile)
         profileDeletedEvent.fire(profile)
-    })
+    }
 
+    fun saveProfile(profile: ServerProfile) {
+        if (profile.ID == 0L) insertProfile(profile)
+        else updateProfile(profile)
+    }
 
     /**************************************************************************
      * Rediscovery Indicator
@@ -136,10 +150,10 @@ class HomeViewModel(app: Application) : BaseViewModel(app) {
      * them, but that has its own issues.
      **************************************************************************/
     val rediscoveredProfiles by lazy {
-        Transformations.switchMap(pref.server.rediscoveryIndicator) {
+        pref.server.rediscoveryIndicator.switchMap {
             if (it) prepareRediscoveredProfiles()
             else MutableLiveData(null)
-        }!!
+        }
     }
 
     private fun prepareRediscoveredProfiles() = with(MediatorLiveData<List<ServerProfile>>()) {

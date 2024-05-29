@@ -10,7 +10,7 @@ package com.gaurav.avnc.ui.home
 
 import android.app.Activity
 import android.app.Instrumentation
-import androidx.preference.PreferenceManager
+import androidx.core.content.edit
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.assertion.PositionAssertions.isCompletelyAbove
 import androidx.test.espresso.assertion.ViewAssertions.matches
@@ -23,6 +23,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.gaurav.avnc.*
 import com.gaurav.avnc.model.ServerProfile
 import com.gaurav.avnc.ui.vnc.VncActivity
+import kotlinx.coroutines.runBlocking
 import org.hamcrest.core.AllOf.allOf
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -52,11 +53,12 @@ class ServerListTest {
 
     @Rule
     @JvmField
-    val dbRule = DatabaseRule()
+    val dbRule = EmptyDatabaseRule()
 
     @Before
     fun before() {
-        dbRule.db.serverProfileDao.insert(testProfile)
+        runBlocking { dbRule.db.serverProfileDao.insert(testProfile) }
+        onView(testProfileMatcher()).checkWillBeDisplayed()
     }
 
     @Test
@@ -77,7 +79,7 @@ class ServerListTest {
     @Test
     fun launchEditor() {
         onView(testProfileMatcher()).doLongClick()
-        onView(withText(R.string.title_edit)).doClick()
+        onView(withText(R.string.title_edit)).checkWithTimeout(matches(isCompletelyDisplayed())).doClick()
 
         onView(withText(R.string.title_edit_server_profile)).inRoot(isDialog()).checkIsDisplayed()
         onView(withText(testProfile.name)).inRoot(isDialog()).checkIsDisplayed()
@@ -87,7 +89,7 @@ class ServerListTest {
     @Test
     fun deleteProfile() {
         onView(testProfileMatcher()).doLongClick()
-        onView(withText(R.string.title_delete)).doClick()
+        onView(withText(R.string.title_delete)).checkWithTimeout(matches(isCompletelyDisplayed())).doClick()
 
         onView(withText(R.string.msg_server_profile_deleted)).checkWillBeDisplayed()
         onView(withText(R.string.tip_empty_server_list)).checkIsDisplayed()
@@ -102,7 +104,7 @@ class ServerListTest {
     @Test
     fun copyHost() {
         onView(testProfileMatcher()).doLongClick()
-        onView(withText(R.string.title_copy_host)).doClick()
+        onView(withText(R.string.title_copy_host)).checkWithTimeout(matches(isCompletelyDisplayed())).doClick()
 
         assertEquals(testProfile.host, getClipboardText())
         onView(withText(R.string.msg_copied_to_clipboard)).checkIsDisplayed()
@@ -110,21 +112,21 @@ class ServerListTest {
 
     @Test
     fun sortServers() {
-        val prefEditor = PreferenceManager.getDefaultSharedPreferences(targetContext).edit()
-
         with(dbRule.db.serverProfileDao) {
-            deleteAll()
-            insert(ServerProfile(name = "pqr"))
-            insert(ServerProfile(name = "abc"))
+            runBlocking {
+                deleteAll()
+                insert(ServerProfile(name = "pqr"))
+                insert(ServerProfile(name = "abc"))
+            }
         }
 
         //Without sorting, "pqr" should be above "abc", as it was inserted first
-        prefEditor.putBoolean("sort_server_list", false).apply()
+        targetPrefs.edit { putBoolean("sort_server_list", false) }
         onView(withText("pqr")).checkWithTimeout(isCompletelyAbove(withText("abc")))
 
 
         //With sorting, "abc" should be above "pqr"
-        prefEditor.putBoolean("sort_server_list", true).commit()
+        targetPrefs.edit { putBoolean("sort_server_list", true) }
         onView(withText("abc")).checkWithTimeout(isCompletelyAbove(withText("pqr")))
     }
 }

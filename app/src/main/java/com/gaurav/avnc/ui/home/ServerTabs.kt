@@ -8,8 +8,13 @@
 
 package com.gaurav.avnc.ui.home
 
-import android.view.*
+import android.view.LayoutInflater
+import android.view.MenuInflater
+import android.view.MenuItem
+import android.view.View
+import android.view.ViewGroup
 import androidx.core.view.forEach
+import androidx.lifecycle.viewModelScope
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.ListAdapter
@@ -22,10 +27,12 @@ import com.gaurav.avnc.databinding.ServerSavedBinding
 import com.gaurav.avnc.databinding.ServerSavedItemBinding
 import com.gaurav.avnc.model.ServerProfile
 import com.gaurav.avnc.ui.home.ServerTabs.PagerAdapter.ViewHolder
+import com.gaurav.avnc.util.setClipboardText
 import com.gaurav.avnc.viewmodel.HomeViewModel
 import com.google.android.material.snackbar.Snackbar
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
+import kotlinx.coroutines.launch
 
 /**
  * This class creates and manages tabs in [HomeActivity].
@@ -35,8 +42,8 @@ import com.google.android.material.tabs.TabLayoutMediator
  */
 class ServerTabs(val activity: HomeActivity) {
 
-    lateinit var savedServersTab: TabLayout.Tab
-    lateinit var discoveredServersTab: TabLayout.Tab
+    private lateinit var savedServersTab: TabLayout.Tab
+    private lateinit var discoveredServersTab: TabLayout.Tab
 
     /**
      * Creates and initializes tabs
@@ -58,6 +65,10 @@ class ServerTabs(val activity: HomeActivity) {
         discoveredServersTab = tabLayout.getTabAt(1)!!
         discoveredServersTab.setIcon(R.drawable.ic_search)
         discoveredServersTab.setContentDescription(R.string.desc_discovered_servers_tab)
+
+        //ViewPager2 uses a RecyclerView internally, and sets it's DescendantFocusability
+        //to 'FOCUS_BEFORE_DESCENDANTS', effectively breaking navigation via D-pad or arrow keys.
+        pager.forEach { (it as ViewGroup).descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS }
     }
 
     fun showSavedServers() {
@@ -122,7 +133,7 @@ class ServerTabs(val activity: HomeActivity) {
     /**
      * Adapter for saved servers
      */
-    class SavedServerAdapter(val viewModel: HomeViewModel)
+    class SavedServerAdapter(val viewModel: HomeViewModel, val canEditServers: Boolean = true)
         : ListAdapter<ServerProfile, SavedServerAdapter.ViewHolder>(Differ) {
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -139,7 +150,7 @@ class ServerTabs(val activity: HomeActivity) {
         }
 
         inner class ViewHolder(val binding: ServerSavedItemBinding)
-            : ProfileViewHolder(viewModel, binding.root, R.menu.saved_server)
+            : ProfileViewHolder(viewModel, binding.root, if (canEditServers) R.menu.saved_server_editable else R.menu.saved_server)
 
         object Differ : DiffUtil.ItemCallback<ServerProfile>() {
             override fun areItemsTheSame(old: ServerProfile, new: ServerProfile) = (old.ID == new.ID)
@@ -238,8 +249,12 @@ class ServerTabs(val activity: HomeActivity) {
         }
 
         private fun copyToClipboard(text: String) {
-            homeViewModel.setClipboardText(text)
-            Snackbar.make(rootView, R.string.msg_copied_to_clipboard, Snackbar.LENGTH_SHORT).show()
+            homeViewModel.viewModelScope.launch {
+                if (setClipboardText(rootView.context, text))
+                    Snackbar.make(rootView, R.string.msg_copied_to_clipboard, Snackbar.LENGTH_SHORT).show()
+                else
+                    Snackbar.make(rootView, "Unable to copy text", Snackbar.LENGTH_SHORT).show()
+            }
         }
     }
 }

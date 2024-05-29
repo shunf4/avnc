@@ -10,10 +10,10 @@ package com.gaurav.avnc.viewmodel
 
 import android.app.Application
 import android.net.Uri
-import androidx.biometric.BiometricManager
-import androidx.biometric.BiometricManager.Authenticators
 import androidx.lifecycle.MutableLiveData
+import androidx.room.withTransaction
 import com.gaurav.avnc.model.ServerProfile
+import com.gaurav.avnc.util.LiveEvent
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -25,13 +25,6 @@ import java.io.IOException
  */
 class PrefsViewModel(app: Application) : BaseViewModel(app) {
 
-    /**
-     * Whether user can be authenticated using Biometric or Device credentials (e.g. PIN, Password)
-     */
-    val canAuthenticateUser by lazy {
-        val types = Authenticators.BIOMETRIC_WEAK or Authenticators.DEVICE_CREDENTIAL
-        BiometricManager.from(app).canAuthenticate(types) == BiometricManager.BIOMETRIC_SUCCESS
-    }
 
     /**************************************************************************
      * Import/Export
@@ -63,7 +56,7 @@ class PrefsViewModel(app: Application) : BaseViewModel(app) {
      * Exports data to given [uri].
      */
     fun export(uri: Uri) {
-        asyncIO {
+        launchIO {
             runCatching {
                 // Serialize
                 val profiles = serverProfileDao.getList()
@@ -71,9 +64,9 @@ class PrefsViewModel(app: Application) : BaseViewModel(app) {
                 val json = serializer.encodeToString(data)
 
                 // Write out
-                val writer = app.contentResolver.openOutputStream(uri)?.writer()
-                writer?.write(json)
-                writer?.close()
+                app.contentResolver.openOutputStream(uri)?.use { stream ->
+                    stream.writer().use { it.write(json) }
+                } ?: throw IOException("Unable to write the file.")
 
             }.let {
                 importExportError.postValue(it.exceptionOrNull()?.message)
@@ -87,12 +80,12 @@ class PrefsViewModel(app: Application) : BaseViewModel(app) {
      * Imports data from given [uri].
      */
     fun import(uri: Uri, deleteCurrentServers: Boolean) {
-        asyncIO {
+        launchIO {
             runCatching {
 
-                val reader = app.contentResolver.openInputStream(uri)?.reader()
-                val json = reader?.readText() ?: throw IOException("Unable to read the file.")
-                reader.close()
+                val json = app.contentResolver.openInputStream(uri)?.use { stream ->
+                    stream.reader().use { it.readText() }
+                } ?: throw IOException("Unable to read the file.")
 
                 // Deserialize
                 val data = serializer.decodeFromString<Container>(json)
@@ -101,7 +94,7 @@ class PrefsViewModel(app: Application) : BaseViewModel(app) {
 
                 //Update database
                 if (deleteCurrentServers) {
-                    db.runInTransaction {
+                    db.withTransaction {
                         serverProfileDao.deleteAll()
                         serverProfileDao.insert(data.profiles)
                     }

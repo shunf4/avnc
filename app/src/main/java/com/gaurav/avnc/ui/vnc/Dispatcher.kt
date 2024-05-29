@@ -9,10 +9,12 @@
 package com.gaurav.avnc.ui.vnc
 
 import android.graphics.PointF
+import android.util.Log
 import com.gaurav.avnc.viewmodel.VncViewModel
 import com.gaurav.avnc.vnc.Messenger
 import com.gaurav.avnc.vnc.PointerButton
 import kotlin.math.abs
+import kotlin.reflect.KFunction1
 
 /**
  * We allow users to customize the actions for different events.
@@ -74,10 +76,10 @@ class Dispatcher(private val activity: VncActivity) {
         val longPressAction = selectPointAction(gesturePref.longPress)
 
         val swipe1Pref = if (gestureStyle == "touchpad") "move-pointer" else gesturePref.swipe1
-        val swipe1Action = selectSwipeAction(swipe1Pref)
-        val swipe2Action = selectSwipeAction(gesturePref.swipe2)
-        val doubleTapSwipeAction = selectSwipeAction(gesturePref.doubleTapSwipe)
-        val longPressSwipeAction = selectSwipeAction(gesturePref.longPressSwipe)
+        val swipe1Action = selectSwipeAction(swipe1Pref, true)
+        val swipe2Action = selectSwipeAction(gesturePref.swipe2, false)
+        val doubleTapSwipeAction = selectSwipeAction(gesturePref.doubleTapSwipe, false)
+        val longPressSwipeAction = selectSwipeAction(gesturePref.longPressSwipe, false)
         val flingAction = selectFlingAction()
 
         val mouseBackAction = selectPointAction(viewModel.pref.input.mouseBack)
@@ -93,6 +95,35 @@ class Dispatcher(private val activity: VncActivity) {
             }
         }
 
+        private fun detectAndDoSideScrollWrapper(fallbackOp: (PointF, PointF, Float, Float) -> Unit): (PointF, PointF, Float, Float) -> Unit {
+            return x@{
+                startPoint: PointF, currentPoint: PointF, dx: Float, dy: Float ->
+                val ww = viewModel.frameState.windowWidth
+                if (ww <= 0) {
+                    fallbackOp(startPoint, currentPoint, dx, dy)
+                    return@x
+                }
+                if (gesturePref.edgeScrollWidth < 0) {
+                    if (startPoint.x + gesturePref.edgeScrollWidth >= 0) {
+                        fallbackOp(startPoint, currentPoint, dx, dy)
+                        return@x
+                    }
+                } else if (gesturePref.edgeScrollWidth >= 10000) {
+                    val x: Int = gesturePref.edgeScrollWidth % 10000
+                    if (startPoint.x - x >= 0 && startPoint.x + x <= ww) {
+                        fallbackOp(startPoint, currentPoint, dx, dy)
+                        return@x
+                    }
+                } else {
+                    if (startPoint.x + gesturePref.edgeScrollWidth <= ww) {
+                        fallbackOp(startPoint, currentPoint, dx, dy)
+                        return@x
+                    }
+                }
+                defaultMode.doRemoteScroll(null, dx, dy, 1)
+            }
+        }
+
         /**
          * Returns a lambda which accepts four arguments:
          *
@@ -101,13 +132,17 @@ class Dispatcher(private val activity: VncActivity) {
          * dx: Change along x-axis since last event
          * dy: Change along y-axis since last event
          */
-        private fun selectSwipeAction(actionName: String): (PointF, PointF, Float, Float) -> Unit {
+        private fun selectSwipeAction(actionName: String, isSingleFinger: Boolean): (PointF, PointF, Float, Float) -> Unit {
+            var wrapper: ((PointF, PointF, Float, Float) -> Unit) -> ((PointF, PointF, Float, Float) -> Unit) = ::detectAndDoSideScrollWrapper
+            if (!isSingleFinger) {
+                wrapper = { f -> f }
+            }
             return when (actionName) {
-                "pan" -> { _, _, dx, dy -> doPan(dx, dy) }
-                "move-pointer" -> { _, cp, dx, dy -> defaultMode.doMovePointer(cp, dx, dy) }
-                "remote-scroll" -> { sp, _, dx, dy -> defaultMode.doRemoteScroll(sp, dx, dy) }
-                "remote-drag" -> { _, cp, dx, dy -> defaultMode.doRemoteDrag(PointerButton.Left, cp, dx, dy) }
-                "remote-drag-middle" -> { _, cp, dx, dy -> defaultMode.doRemoteDrag(PointerButton.Middle, cp, dx, dy) }
+                "pan" -> wrapper { _, _, dx, dy -> doPan(dx, dy) }
+                "move-pointer" -> wrapper { _, cp, dx, dy -> defaultMode.doMovePointer(cp, dx, dy) }
+                "remote-scroll" -> wrapper { sp, _, dx, dy -> defaultMode.doRemoteScroll(sp, dx, dy, null) }
+                "remote-drag" -> wrapper { _, cp, dx, dy -> defaultMode.doRemoteDrag(PointerButton.Left, cp, dx, dy) }
+                "remote-drag-middle" -> wrapper { _, cp, dx, dy -> defaultMode.doRemoteDrag(PointerButton.Middle, cp, dx, dy) }
                 else -> { _, _, _, _ -> } //Nothing
             }
         }
@@ -117,8 +152,9 @@ class Dispatcher(private val activity: VncActivity) {
          * So it only makes sense when 1-finger-swipe is set to "pan".
          */
         private fun selectFlingAction(): (Float, Float) -> Unit {
-            return if (swipe1Pref == "pan") { vx, vy -> startFrameFling(vx, vy) }
-            else { _, _ -> }
+            // return if (swipe1Pref == "pan") { vx, vy -> startFrameFling(vx, vy) }
+            // else { _, _ -> }
+            return { _, _ -> }
         }
     }
 
@@ -181,10 +217,16 @@ class Dispatcher(private val activity: VncActivity) {
         //Used for remote scrolling
         private var accumulatedDx = 0F
         private var accumulatedDy = 0F
-        private val deltaPerScroll = 20F //For how much dx/dy, one scroll event will be sent
+        private val deltaPerScroll = 43F //For how much dx/dy, one scroll event will be sent
         private val yScrollDirection = (if (gesturePref.invertVerticalScrolling) -1 else 1)
+        protected var lastPointerPostTransformPositionForScroll = PointF(0f, 0f)
+        private var shouldPreventTransformThisTime = false
 
         abstract fun transformPoint(p: PointF): PointF?
+        protected fun transformPoint1(p: PointF): PointF? {
+            if (shouldPreventTransformThisTime) { return p; }
+            return transformPoint(p);
+        }
         abstract fun doMovePointer(p: PointF, dx: Float, dy: Float)
         abstract fun doRemoteDrag(button: PointerButton, p: PointF, dx: Float, dy: Float)
 
@@ -192,18 +234,19 @@ class Dispatcher(private val activity: VncActivity) {
         open fun onGestureStop(p: PointF) = doButtonRelease(p)
 
         fun doButtonDown(button: PointerButton, p: PointF) {
-            transformPoint(p)?.let { messenger.sendPointerButtonDown(button, it) }
+            transformPoint1(p)?.let { lastPointerPostTransformPositionForScroll = it ; messenger.sendPointerButtonDown(button, it) }
         }
 
         fun doButtonUp(button: PointerButton, p: PointF) {
-            transformPoint(p)?.let { messenger.sendPointerButtonUp(button, it) }
+            transformPoint1(p)?.let { lastPointerPostTransformPositionForScroll = it ; messenger.sendPointerButtonUp(button, it) }
         }
 
         fun doButtonRelease(p: PointF) {
-            transformPoint(p)?.let { messenger.sendPointerButtonRelease(it) }
+            transformPoint1(p)?.let { messenger.sendPointerButtonRelease(it) }
         }
 
         fun doClick(button: PointerButton, p: PointF) {
+//            Log.i("doClick", "doClick " + button + " " + p)
             doButtonDown(button, p)
             // Some (obscure) apps seems to ignore click event if button-up is received too early
             if (button == PointerButton.Left && profile.fButtonUpDelay)
@@ -216,9 +259,13 @@ class Dispatcher(private val activity: VncActivity) {
             doClick(button, p)
         }
 
-        fun doRemoteScroll(focus: PointF, dx: Float, dy: Float) {
+        fun doRemoteScroll(focusInput: PointF?, dx: Float, dy: Float, overrideYScrollDirection: Int?) {
+            val focus = focusInput ?: lastPointerPostTransformPositionForScroll
+            if (focusInput == null) {
+                shouldPreventTransformThisTime = true
+            }
             accumulatedDx += dx
-            accumulatedDy += dy * yScrollDirection
+            accumulatedDy += overrideYScrollDirection?.let { dy * it } ?: (dy * yScrollDirection)
 
             //Drain horizontal change
             while (abs(accumulatedDx) >= deltaPerScroll) {
@@ -241,6 +288,7 @@ class Dispatcher(private val activity: VncActivity) {
                     accumulatedDy += deltaPerScroll
                 }
             }
+            shouldPreventTransformThisTime = false
         }
 
         /**
@@ -248,7 +296,7 @@ class Dispatcher(private val activity: VncActivity) {
          * [vs] Movement of vertical scroll wheel
          */
         fun doRemoteScrollFromMouse(p: PointF, hs: Float, vs: Float) {
-            doRemoteScroll(p, hs * deltaPerScroll, vs * deltaPerScroll)
+            doRemoteScroll(p, hs * deltaPerScroll, vs * deltaPerScroll, null)
         }
     }
 

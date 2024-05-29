@@ -17,7 +17,7 @@ android {
     ndkVersion "26.1.10909125"
 
     defaultConfig {
-        applicationId "com.gaurav.avnc"
+        applicationId "com.gaurav.avnc.shunf4_mod"
         minSdk 21
         targetSdk 34
         versionCode 31

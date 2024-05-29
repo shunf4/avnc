@@ -50,6 +50,7 @@ class AppPreferences(context: Context) {
         val swipe1; get() = prefs.getString("gesture_swipe1", "pan")!!
         val swipe2; get() = prefs.getString("gesture_swipe2", "pan")!!
         val doubleTapSwipe; get() = prefs.getString("gesture_double_tap_swipe", "remote-drag")!!
+        val edgeScrollWidth; get() = Integer.parseInt(prefs.getString("edge_scroll_width", "150")!!)
         val longPressSwipe; get() = prefs.getString("gesture_long_press_swipe", "none")!!
         val longPressSwipeEnabled; get() = (longPressSwipe != "none")
         val swipeSensitivity; get() = prefs.getInt("gesture_swipe_sensitivity", 10) / 10f

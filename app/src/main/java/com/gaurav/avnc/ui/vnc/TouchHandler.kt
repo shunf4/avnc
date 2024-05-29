@@ -11,6 +11,7 @@ package com.gaurav.avnc.ui.vnc
 import android.content.Context
 import android.graphics.PointF
 import android.os.Build
+import android.util.Log
 import android.view.GestureDetector
 import android.view.GestureDetector.SimpleOnGestureListener
 import android.view.HapticFeedbackConstants
@@ -201,6 +202,7 @@ class TouchHandler(private val viewModel: VncViewModel, private val dispatcher: 
         override fun onDoubleTapConfirmed(e: MotionEvent) = dispatcher.onDoubleTap(e.point())
 
         override fun onMultiFingerTap(e: MotionEvent, fingerCount: Int) {
+//            Log.i("AVNC", "onMultiFingerTap " + e + " " + fingerCount)
             when (fingerCount) {
                 2 -> dispatcher.onTap2(e.point())
                 // Taps by 3+ fingers are not exposed yet

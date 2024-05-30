@@ -92,6 +92,11 @@
             app:key="invert_vertical_scrolling"
             app:title="@string/pref_invert_vertical_scrolling" />
 
+        <SwitchPreference
+            android:defaultValue="false"
+            app:key="direct_mode_tap_only_places_mouse"
+            app:title="direct_mode_tap_only_places_mouse" />
+
         <EditTextPreference
             android:key="edge_scroll_width"
             android:title="edge_scroll_width"

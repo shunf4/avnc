@@ -55,6 +55,7 @@ class AppPreferences(context: Context) {
         val longPressSwipeEnabled; get() = (longPressSwipe != "none")
         val swipeSensitivity; get() = prefs.getInt("gesture_swipe_sensitivity", 10) / 10f
         val invertVerticalScrolling; get() = prefs.getBoolean("invert_vertical_scrolling", false)
+        val directModeTapOnlyPlacesMouse; get() = prefs.getBoolean("direct_mode_tap_only_places_mouse", false)
     }
 
     inner class Input {

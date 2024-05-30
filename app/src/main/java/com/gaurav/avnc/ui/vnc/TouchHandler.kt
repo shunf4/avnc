@@ -329,12 +329,15 @@ class TouchHandler(private val viewModel: VncViewModel, private val dispatcher: 
         private var longPressDetected = false
         private var doubleTapDetected = false
         private var scrolling = false
+        private var cumulatedX = 0f
+        private var cumulatedY = 0f
         private var maxFingerDown = 0
         private var currentDownEvent: MotionEvent? = null
 
 
         private inner class InnerListener1 : SimpleOnGestureListener() {
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+//                Log.i("TouchHandler", "onSingleTapConfirmed")
                 listener.onSingleTapConfirmed(e)
                 return true
             }
@@ -379,6 +382,8 @@ class TouchHandler(private val viewModel: VncViewModel, private val dispatcher: 
             }
 
             callOnScroll(e1, e2, -dx, -dy)
+            cumulatedX += dx
+            cumulatedY += dy
             return true
         }
 
@@ -417,7 +422,8 @@ class TouchHandler(private val viewModel: VncViewModel, private val dispatcher: 
                             listener.onDoubleTapConfirmed(downEvent)
 
                         val gestureDuration = (e.eventTime - downEvent.eventTime)
-                        if (maxFingerDown > 1 && !scrolling && gestureDuration < ViewConfiguration.getDoubleTapTimeout())
+//                        Log.i("TouchHandler", "maxFingerDown " + maxFingerDown + " scrolling " + scrolling + " gestureDuration " + gestureDuration);
+                        if (maxFingerDown > 1 && (!scrolling || cumulatedX * cumulatedX + cumulatedY * cumulatedY < 900) && gestureDuration < ViewConfiguration.getDoubleTapTimeout())
                             listener.onMultiFingerTap(downEvent, maxFingerDown)
                     }
 
@@ -437,6 +443,8 @@ class TouchHandler(private val viewModel: VncViewModel, private val dispatcher: 
             maxFingerDown = 0
             currentDownEvent?.recycle()
             currentDownEvent = null
+            cumulatedX = 0f
+            cumulatedY = 0f
         }
     }
 

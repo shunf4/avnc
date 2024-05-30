@@ -9,12 +9,10 @@
 package com.gaurav.avnc.ui.vnc
 
 import android.graphics.PointF
-import android.util.Log
 import com.gaurav.avnc.viewmodel.VncViewModel
 import com.gaurav.avnc.vnc.Messenger
 import com.gaurav.avnc.vnc.PointerButton
 import kotlin.math.abs
-import kotlin.reflect.KFunction1
 
 /**
  * We allow users to customize the actions for different events.
@@ -84,9 +82,20 @@ class Dispatcher(private val activity: VncActivity) {
 
         val mouseBackAction = selectPointAction(viewModel.pref.input.mouseBack)
 
+        var lastSingleTapPos = PointF(-10000f, -10000f)
+
         private fun selectPointAction(actionName: String): (PointF) -> Unit {
             return when (actionName) {
-                "left-click" -> { p -> defaultMode.doClick(PointerButton.Left, p) }
+                "left-click" -> if (gesturePref.directModeTapOnlyPlacesMouse && gestureStyle == "touchscreen") { { p ->
+                        val xd = (p.x - lastSingleTapPos.x)
+                        val yd = (p.y - lastSingleTapPos.y)
+                        if (xd * xd + yd * yd < 900) {
+                            defaultMode.doClick(PointerButton.Left, p)
+                        } else {
+                            defaultMode.doClick(PointerButton.None, p)
+                        }
+                        lastSingleTapPos = PointF(p.x, p.y)
+                } } else { { p -> defaultMode.doClick(PointerButton.Left, p) } }
                 "double-click" -> { p -> defaultMode.doDoubleClick(PointerButton.Left, p) }
                 "middle-click" -> { p -> defaultMode.doClick(PointerButton.Middle, p) }
                 "right-click" -> { p -> defaultMode.doClick(PointerButton.Right, p) }
@@ -348,9 +357,22 @@ class Dispatcher(private val activity: VncActivity) {
 
             //Try to keep the pointer centered on screen
             val vp = viewModel.frameState.toVP(pointerPosition)
-            val centerDiffX = viewModel.frameState.safeArea.centerX() - vp.x
-            val centerDiffY = viewModel.frameState.safeArea.centerY() - vp.y
-            viewModel.panFrame(centerDiffX, centerDiffY)
+            var panDiffX = 0f
+            var panDiffY = 0f
+            if (vp.x < viewModel.frameState.safeArea.left + 45) {
+                panDiffX = viewModel.frameState.safeArea.left + 45 - vp.x
+            } else if (vp.x > viewModel.frameState.safeArea.right - 45) {
+                panDiffX = viewModel.frameState.safeArea.right - 45 - vp.x
+            }
+
+            if (vp.y < viewModel.frameState.safeArea.top + 45) {
+                panDiffY = viewModel.frameState.safeArea.top + 45 - vp.y
+            } else if (vp.y > viewModel.frameState.safeArea.bottom - 45) {
+                panDiffY = viewModel.frameState.safeArea.bottom - 45 - vp.y
+            }
+            if (panDiffX != 0f || panDiffY != 0f) {
+                viewModel.panFrame(panDiffX, panDiffY)
+            }
         }
 
         override fun doRemoteDrag(button: PointerButton, p: PointF, dx: Float, dy: Float) {

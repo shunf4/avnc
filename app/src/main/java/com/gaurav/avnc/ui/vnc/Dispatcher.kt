@@ -89,7 +89,7 @@ class Dispatcher(private val activity: VncActivity) {
                 "left-click" -> if (gesturePref.directModeTapOnlyPlacesMouse && gestureStyle == "touchscreen") { { p ->
                         val xd = (p.x - lastSingleTapPos.x)
                         val yd = (p.y - lastSingleTapPos.y)
-                        if (xd * xd + yd * yd < 900) {
+                        if (xd * xd + yd * yd < 1400) {
                             defaultMode.doClick(PointerButton.Left, p)
                         } else {
                             defaultMode.doClick(PointerButton.None, p)
@@ -226,7 +226,7 @@ class Dispatcher(private val activity: VncActivity) {
         //Used for remote scrolling
         private var accumulatedDx = 0F
         private var accumulatedDy = 0F
-        private val deltaPerScroll = 43F //For how much dx/dy, one scroll event will be sent
+        private val deltaPerScroll = 62F //For how much dx/dy, one scroll event will be sent
         private val yScrollDirection = (if (gesturePref.invertVerticalScrolling) -1 else 1)
         protected var lastPointerPostTransformPositionForScroll = PointF(0f, 0f)
         private var shouldPreventTransformThisTime = false

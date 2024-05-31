@@ -14,7 +14,6 @@ import android.view.KeyEvent
 import com.gaurav.avnc.util.AppPreferences
 import com.gaurav.avnc.vnc.XKeySym
 import com.gaurav.avnc.vnc.XKeySymAndroid
-import com.gaurav.avnc.vnc.XKeySymAndroid.updateKeyMap
 import com.gaurav.avnc.vnc.XKeySymUnicode
 import com.gaurav.avnc.vnc.XTKeyCode
 
@@ -85,13 +84,9 @@ import com.gaurav.avnc.vnc.XTKeyCode
  */
 class KeyHandler(private val dispatcher: Dispatcher, private val cfLegacyKeysym: Boolean, prefs: AppPreferences) {
 
-    /**
-     * Pre-KeyEvent hook.
-     * This is NOT triggered for all characters.
-     */
-    fun onCommitText(text: CharSequence?): Boolean {
-        return handleCCedilla(text)
-    }
+    var processedEventObserver: ((KeyEvent) -> Unit)? = null
+    var enableMacOSCompatibility = false
+    private var hasSentShiftDown = false
 
     /**
      * Shortcut to send both up & down events. Useful for Virtual Keys.
@@ -110,7 +105,10 @@ class KeyHandler(private val dispatcher: Dispatcher, private val cfLegacyKeysym:
         if (shouldIgnoreEvent(event))
             return false
 
-        return handleKeyEvent(preProcessEvent(event))
+        val handled = handleKeyEvent(overrideKeyEvent(event))
+
+        postProcessEvent(event)
+        return handled
     }
 
 
@@ -185,7 +183,8 @@ class KeyHandler(private val dispatcher: Dispatcher, private val cfLegacyKeysym:
      * Emits X KeySym corresponding to [keyCode]
      */
     private fun emitForAndroidKeyCode(keyCode: Int, isDown: Boolean, xtCode: Int = 0): Boolean {
-        val keySym = XKeySymAndroid.getKeySymForAndroidKeyCode(keyCode)
+        var keySym = XKeySymAndroid.getKeySymForAndroidKeyCode(keyCode)
+        keySym = overrideXKeySym(keySym)
         return emit(keySym, isDown, xtCode)
     }
 
@@ -204,9 +203,10 @@ class KeyHandler(private val dispatcher: Dispatcher, private val cfLegacyKeysym:
 
         // If we are generating legacy KeySym and the character is uppercase,
         // we need to fake press the Shift key. Otherwise, most servers can't
-        // handle them. This is just a compat shim and ideally server should
-        // support Unicode KeySym.
-        val shouldFakeShift = uKeySym in 0x100..0xfffe && uChar.toChar().isUpperCase()
+        // handle them. It also helps with Android Keyboard apps which don't
+        // generates Shift key events correctly for uppercase letters. The
+        // CCedilla workaround in FrameView also relies on this feature.
+        val shouldFakeShift = uKeySym in 0x80..0xfffe && uChar.toChar().isUpperCase() && !hasSentShiftDown
         if (shouldFakeShift)
             emitForAndroidKeyCode(KeyEvent.KEYCODE_SHIFT_LEFT, true)
 
@@ -266,6 +266,13 @@ class KeyHandler(private val dispatcher: Dispatcher, private val cfLegacyKeysym:
                 || keyCode == KeyEvent.KEYCODE_NUMPAD_DOT) && !event.isNumLockOn
     }
 
+    private fun postProcessEvent(event: KeyEvent) {
+        if (event.keyCode == KeyEvent.KEYCODE_SHIFT_LEFT || event.keyCode == KeyEvent.KEYCODE_SHIFT_RIGHT)
+            hasSentShiftDown = event.action == KeyEvent.ACTION_DOWN
+
+        processedEventObserver?.invoke(event)
+    }
+
     /************************************************************************************
      * Diacritics (Accents) Support
      *
@@ -321,49 +328,30 @@ class KeyHandler(private val dispatcher: Dispatcher, private val cfLegacyKeysym:
         return true
     }
 
-    /**
-     * 'Ç' & 'ç' requires special handling because Android generates them with extra ALT key press,
-     * and gives no indication in KeyEvents that accents are involved. So we have to handle these
-     * before events are synthesized by InputConnection in FrameView.
-     */
-    private fun handleCCedilla(text: CharSequence?): Boolean {
-        if (text == "ç") {
-            emitForUnicodeChar('ç'.code, true)
-            emitForUnicodeChar('ç'.code, false)
-            return true
-        }
-
-        if (text == "Ç") {
-            emitForAndroidKeyCode(KeyEvent.KEYCODE_SHIFT_LEFT, true)
-            emitForUnicodeChar('Ç'.code, true)
-            emitForUnicodeChar('Ç'.code, false)
-            emitForAndroidKeyCode(KeyEvent.KEYCODE_SHIFT_LEFT, false)
-            return true
-        }
-
-        return false
-    }
-
     /************************************************************************************
      * Custom key-mappings
      ***********************************************************************************/
+    private val inputPref = prefs.input
 
-    init {
-        if (prefs.input.kmLanguageSwitchToSuper) updateKeyMap(KeyEvent.KEYCODE_LANGUAGE_SWITCH, XKeySym.XK_Super_L)
-        if (prefs.input.kmRightAltToSuper) updateKeyMap(KeyEvent.KEYCODE_ALT_RIGHT, XKeySym.XK_Super_L)
-    }
+    private fun overrideKeyEvent(event: KeyEvent): KeyEvent {
+        if ((event.keyCode == KeyEvent.KEYCODE_LANGUAGE_SWITCH && inputPref.kmLanguageSwitchToSuper) ||
+            (event.keyCode == KeyEvent.KEYCODE_ALT_RIGHT && inputPref.kmRightAltToSuper))
+            return KeyEvent(event.action, KeyEvent.KEYCODE_META_LEFT)
 
-    // We can't map Back key to Escape inside init because we don't
-    // want to affect Back key events coming from Navigation Bar.
-    // So we have to test each event.
-    private val kmBackToEscape = prefs.input.kmBackToEscape
-
-    private fun preProcessEvent(event: KeyEvent): KeyEvent {
-        if (event.keyCode == KeyEvent.KEYCODE_BACK && kmBackToEscape
-            && (event.flags and KeyEvent.FLAG_VIRTUAL_HARD_KEY == 0))
+        // Back key mapping doesn't affect the events generated by Back button in Navigation bar
+        if (event.keyCode == KeyEvent.KEYCODE_BACK && (event.flags and KeyEvent.FLAG_VIRTUAL_HARD_KEY == 0)
+            && inputPref.kmBackToEscape)
             return KeyEvent(event.action, KeyEvent.KEYCODE_ESCAPE)
 
         return event
+    }
+
+    private fun overrideXKeySym(keySym: Int): Int {
+        if (enableMacOSCompatibility) {
+            if (keySym == XKeySym.XK_Alt_L) return XKeySym.XK_Meta_L
+            if (keySym == XKeySym.XK_Alt_R) return XKeySym.XK_Meta_R
+        }
+        return keySym
     }
 
     /************************************************************************************

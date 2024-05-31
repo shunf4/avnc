@@ -282,9 +282,14 @@ class KeyHandlerTest {
 
     @Test
     fun diacriticTest_capitalCharAfterAccent() {
+        sendDown(KeyEvent.KEYCODE_SHIFT_RIGHT)
         sendAccent(ACCENT_TILDE)
         sendKey(KeyEvent.KEYCODE_A, 'A')
-        assertEquals('Ã'.code, dispatchedKeyDowns.firstOrNull())
+        sendUp(KeyEvent.KEYCODE_SHIFT_RIGHT)
+
+        assertEquals(XKeySym.XK_Shift_R, dispatchedKeyDowns[0])
+        assertEquals('Ã'.code, dispatchedKeyDowns[1])
+        dispatchedKeyUps.reverse()
     }
 
     @Test
@@ -355,5 +360,46 @@ class KeyHandlerTest {
         sendAccent(ACCENT_TILDE)
         sendKey(KeyEvent.KEYCODE_SHIFT_RIGHT, 0)  // Meta-keys should be passed through
         assertEquals(XKeySym.XK_Shift_R, dispatchedKeyDowns.firstOrNull())
+    }
+
+    @Test
+    fun cCedilla() {
+        keyHandler.onKeyEvent(KeyEvent(0, "ç", 0, 0))
+        assertEquals('ç'.code, dispatchedKeyDowns.firstOrNull())
+    }
+
+    @Test
+    fun cCedillaUppercase() {
+        keyHandler.onKeyEvent(KeyEvent(0, "Ç", 0, 0))
+        assertEquals(XKeySym.XK_Shift_L, dispatchedKeyDowns[0])
+        assertEquals('Ç'.code, dispatchedKeyDowns[1])
+    }
+
+    /**************************************************************************/
+
+    @Test
+    fun keyMappingPrefs() {
+        val mockPrefs = mockk<AppPreferences>()
+        every { mockPrefs.input.kmLanguageSwitchToSuper } returns true
+        every { mockPrefs.input.kmRightAltToSuper } returns true
+        val keyHandler = KeyHandler(mockDispatcher, true, mockPrefs)
+
+        keyHandler.onKey(KeyEvent.KEYCODE_LANGUAGE_SWITCH)
+        keyHandler.onKey(KeyEvent.KEYCODE_ALT_RIGHT)
+
+        assertEquals(XKeySym.XK_Super_L, dispatchedKeyDowns[0])
+        assertEquals(XKeySym.XK_Super_L, dispatchedKeyDowns[1])
+    }
+
+
+    @Test
+    fun macOSCompatibility() {
+        keyHandler.enableMacOSCompatibility = true
+        keyHandler.onKey(KeyEvent.KEYCODE_ALT_RIGHT)
+        keyHandler.onKey(KeyEvent.KEYCODE_ALT_LEFT)
+
+        // Should generate 'Meta' instead of normal 'Alt'
+        assertEquals(XKeySym.XK_Meta_R, dispatchedKeyDowns[0])
+        assertEquals(XKeySym.XK_Meta_L, dispatchedKeyDowns[1])
     }
 }

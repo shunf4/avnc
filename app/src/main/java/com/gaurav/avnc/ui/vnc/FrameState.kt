@@ -294,7 +294,8 @@ class FrameState(
         val scaledFb = (fb * scale)
         val diff = (safeMax - safeMin) - scaledFb
 
-        return if (diff >= 0) diff / 2 + safeMin       //Frame will be smaller than safe area, so center it
+        // return if (diff >= 0) diff / 2 + safeMin       //Frame will be smaller than safe area, so center it
+        return if (diff >= 0) current       // No do not center
         else current.coerceIn(diff + safeMin, safeMin) //otherwise, make sure safe area is completely filled.
     }
 

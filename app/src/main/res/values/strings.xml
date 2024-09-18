@@ -30,6 +30,7 @@
     <string name="title_import">Import</string>
     <string name="title_view_only_mode">View-only</string>
     <string name="title_connect_on_app_start">Auto-connect when app starts</string>
+    <string name="title_enable_wol">Wake-on-LAN</string>
     <string name="title_hide_remote_cursor">Hide remote pointer</string>
     <string name="title_key_compat_mode">Send legacy key events</string>
     <string name="title_button_up_delay">Send delayed click events</string>
@@ -57,6 +58,7 @@
     <string name="title_none">None</string>
     <string name="title_next">Next</string>
     <string name="title_got_it">Got it</string>
+    <string name="title_load_defaults">Load defaults</string>
 
 
     <string name="hint_urlbar">Connect to a Server</string>
@@ -67,6 +69,7 @@
     <string name="hint_server_id">Server ID</string>
     <string name="hint_username">Username</string>
     <string name="hint_password">Password</string>
+    <string name="hint_wol_mac">MAC address</string>
     <string name="hint_ssh_host">SSH host</string>
     <string name="hint_ssh_port">SSH port</string>
     <string name="hint_key_password">Key password</string>
@@ -86,13 +89,16 @@
     <string name="msg_loading">Loading…</string>
     <string name="msg_imported">Imported</string>
     <string name="msg_exported">Exported</string>
+    <string name="msg_saved">Saved</string>
     <string name="msg_export_auth_required">Authenticate to export servers</string>
     <string name="msg_invalid_key_file">Invalid private key file</string>
     <string name="msg_invalid_vnc_uri">Invalid VNC URI</string>
     <string name="msg_copied_to_clipboard">Copied</string>
+    <string name="msg_tap_to_select_a_key">Tap to select a key:</string>
     <string name="msg_pk_password_not_saved">AVNC no longer saves private key passwords to improve security.</string>
     <string name="msg_key_compat_mode_help">Some servers have limited Unicode support. Legacy key events can help input non-English text.</string>
     <string name="msg_button_up_delay_help">Delaying click events can help in some rare cases if an app is not responding to clicks.</string>
+    <string name="msg_wake_on_lan_help">Wake-on-LAN can be used to remotely power-on a computer.\n\nFirst, configure WoL on remote computer, then enable it in AVNC.\nOnce enabled, WoL magic packet will be automatically sent before connecting to this server.</string>
     <string name="msg_drag_gesture_help">Assigning an action to this gesture will change Long press detection:\n\n<b>Press-hold-release</b> → Long press\n<b>Press-hold-swipe</b> → Long press and swipe</string>
     <string name="msg_shortcut_server_deleted">This server has been deleted</string>
     <string name="tip_empty_server_list">Server list is empty.\nClick \'<b>+</b>\' to add a server, or\nuse the top address bar to connect directly.</string>
@@ -185,6 +191,7 @@
     <string name="pref_mouse_back_action_default">Default</string>
     <string name="pref_vk">Virtual keys</string>
     <string name="pref_vk_show_all">Show all keys</string>
+    <string name="pref_customize_virtual_keys">Customize keys</string>
     <string name="pref_vk_open_with_keyboard">Open with keyboard</string>
     <string name="pref_km">Key mappings</string>
     <string name="pref_km_right_alt_to_super">Right Alt → Super</string>
@@ -196,9 +203,9 @@
     <string name="pref_orientation_option_portrait">Portrait</string>
     <string name="pref_orientation_option_landscape">Landscape</string>
     <string name="pref_fullscreen">Fullscreen</string>
-    <string name="pref_display_cutout">Draw behind display cutout (experimental)</string>
+    <string name="pref_display_cutout">Extend into cutout area</string>
     <string name="pref_enable_pip">Picture-in-picture</string>
-    <string name="pref_keep_screen_on">Keep screen on</string>
+    <string name="pref_keep_screen_on">Keep screen ON</string>
     <string name="pref_toolbar">Toolbar</string>
     <string name="pref_toolbar_alignment">Alignment</string>
     <string name="pref_toolbar_alignment_option_start">Start</string>

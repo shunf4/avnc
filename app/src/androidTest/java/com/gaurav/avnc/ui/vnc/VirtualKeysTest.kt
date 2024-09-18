@@ -15,12 +15,14 @@ import androidx.test.espresso.Espresso.onIdle
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.pressImeActionButton
 import androidx.test.espresso.action.ViewActions.pressKey
-import androidx.test.espresso.action.ViewActions.swipeLeft
+import androidx.test.espresso.action.ViewActions.scrollTo
 import androidx.test.espresso.assertion.ViewAssertions.doesNotExist
 import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.contrib.DrawerActions
+import androidx.test.espresso.contrib.ViewPagerActions
 import androidx.test.espresso.matcher.ViewMatchers.isChecked
 import androidx.test.espresso.matcher.ViewMatchers.isNotChecked
+import androidx.test.espresso.matcher.ViewMatchers.withContentDescription
 import androidx.test.espresso.matcher.ViewMatchers.withHint
 import androidx.test.espresso.matcher.ViewMatchers.withId
 import androidx.test.espresso.matcher.ViewMatchers.withText
@@ -35,8 +37,10 @@ import com.gaurav.avnc.doClick
 import com.gaurav.avnc.doLongClick
 import com.gaurav.avnc.doTypeText
 import com.gaurav.avnc.model.ServerProfile
+import com.gaurav.avnc.runOnMainSync
 import com.gaurav.avnc.targetContext
 import com.gaurav.avnc.targetPrefs
+import com.gaurav.avnc.util.AppPreferences
 import com.gaurav.avnc.vnc.XKeySym
 import org.junit.Assert
 import org.junit.Before
@@ -101,10 +105,9 @@ class VirtualKeysTest {
             onView(withId(R.id.drawer_layout)).perform(DrawerActions.open())
             onView(withId(R.id.virtual_keys_btn)).doClick()
 
-            onView(withId(R.id.pager)).checkWillBeDisplayed().perform(swipeLeft())
-            onView(withText("Insert")).checkIsDisplayed()
-            onView(withText("Delete")).checkIsDisplayed()
-            onView(withText("F1")).checkIsDisplayed()
+            onView(withText("Insert")).perform(scrollTo()).checkIsDisplayed()
+            onView(withText("Delete")).perform(scrollTo()).checkIsDisplayed()
+            onView(withText("F1")).perform(scrollTo()).checkIsDisplayed()
         }
     }
 
@@ -142,7 +145,7 @@ class VirtualKeysTest {
             onView(withText("Tab")).checkIsDisplayed()
 
             // close it
-            onView(withId(R.id.close_btn)).doClick()
+            onView(withContentDescription("Close virtual keys")).doClick()
             onView(withText("Ctrl")).checkIsNotDisplayed()
         }
 
@@ -163,7 +166,7 @@ class VirtualKeysTest {
             onView(withId(R.id.virtual_keys_btn)).doClick()
             onView(withText("Ctrl")).checkIsDisplayed()
 
-            onView(withId(R.id.pager)).perform(swipeLeft())
+            onView(withId(R.id.pager)).perform(ViewPagerActions.scrollToLast(false))
             onView(withHint(R.string.hint_send_text_to_server))
                     .checkIsDisplayed()
                     .doTypeText(text)
@@ -206,5 +209,32 @@ class VirtualKeysTest {
                     .perform(pressKey(KeyEvent.KEYCODE_C))
             onView(withText("Shift")).check(matches(isChecked()))
         }
+    }
+
+    @Test
+    fun defaultConfigTest() {
+        val prefs = runOnMainSync { AppPreferences(targetContext) }
+        val defaultKeys = VirtualKeyLayoutConfig.getDefaultLayout(prefs)
+
+        targetPrefs.edit { putBoolean("vk_show_all", true) }
+        val defaultAllKeys = VirtualKeyLayoutConfig.getDefaultLayout(prefs)
+
+        Assert.assertNotEquals(defaultKeys, defaultAllKeys)
+
+        // For now, duplicate keys are not allowed
+        Assert.assertEquals(defaultKeys, defaultKeys.distinct())
+        Assert.assertEquals(defaultAllKeys, defaultAllKeys.distinct())
+    }
+
+    @Test
+    fun corruptedConfigTest() {
+        targetPrefs.edit { putString("vk_keys_layout", "foobar") }
+        val prefs = runOnMainSync { AppPreferences(targetContext) }
+
+        val keys = VirtualKeyLayoutConfig.getLayout(prefs)
+        val defaultKeys = VirtualKeyLayoutConfig.getDefaultLayout(prefs)
+
+        // If for some reason layout pref is corrupted, default config should be loaded
+        Assert.assertEquals(defaultKeys, keys)
     }
 }

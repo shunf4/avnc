@@ -8,6 +8,8 @@
 
 package com.gaurav.avnc.viewmodel.service
 
+import android.system.ErrnoException
+import android.system.OsConstants
 import android.util.Base64
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
@@ -96,6 +98,8 @@ class TunnelGate(val host: String, val port: Int, private val forwarder: LocalPo
     }
 }
 
+class SshTunnelException(message: String = "", cause: Throwable? = null) : IOException(message, cause)
+
 /**
  * Manager for SSH Tunnel
  */
@@ -108,34 +112,19 @@ class SshTunnel(private val viewModel: VncViewModel) {
      * Opens the tunnel according to current profile in [viewModel].
      */
     fun open(): TunnelGate {
+        check(connection == null) { "Connection already open" }
         val profile = viewModel.profile
-        val connection = connect(profile)
-        this.connection = connection
 
-        authenticate(connection, profile)
-
-        if (!connection.isAuthenticationComplete)
-            throw IOException("SSH authentication failed")
-
-
-        // SSHLib does not expose internal ServerSocket used for local port forwarder.
-        // Hence, if we pass 0 as local port to let the system pick a port for us, we have no way
-        // to know the port system picked.
-        // So we create a temporary ServerSocket, close it immediately and try to use its port.
-        // But between the close-reuse, that port can be assigned to someone else, so we try again.
-        for (i in 1..50) {
-            val attemptedPort = ServerSocket(0).use { it.localPort }
-            val address = InetSocketAddress(localHost, attemptedPort)
-
-            try {
-                val forwarder = connection.createLocalPortForwarder(address, profile.host, profile.port)
-                return TunnelGate(localHost, attemptedPort, forwarder)
-            } catch (e: IOException) {
-                //Retry
-            }
-        }
-        throw IOException("Cannot find a local port for SSH Tunnel")
+        connection = connect(profile)
+        authenticate(connection!!, profile)
+        return createPortForwarder(connection!!, profile)
     }
+
+    fun close() {
+        connection?.close()
+        connection = null
+    }
+
 
     /**
      * It is possible for a host to have multiple IP addresses.
@@ -147,11 +136,11 @@ class SshTunnel(private val viewModel: VncViewModel) {
                 return Connection(address.hostAddress, profile.sshPort).apply { connect(HostKeyVerifier(viewModel)) }
             } catch (e: IOException) {
                 if (e.cause is NoRouteToHostException) continue
-                else throw e
+                else throw unwrapLibraryException(e)
             }
         }
         // We will reach here only if every address throws NoRouteToHostException
-        throw NoRouteToHostException("Unreachable SSH host: ${profile.sshHost}")
+        throw SshTunnelException("Unreachable SSH host: ${profile.sshHost}")
     }
 
     private fun authenticate(connection: Connection, profile: ServerProfile) {
@@ -159,6 +148,8 @@ class SshTunnel(private val viewModel: VncViewModel) {
             ServerProfile.SSH_AUTH_PASSWORD -> {
                 val password = viewModel.getLoginInfo(LoginInfo.Type.SSH_PASSWORD).password  //Possibly blocking call
                 connection.authenticateWithPassword(profile.sshUsername, password)
+                if (!connection.isAuthenticationComplete)
+                    throw SshTunnelException("SSH Password authentication failed")
             }
             ServerProfile.SSH_AUTH_KEY -> {
                 val pk = profile.sshPrivateKey
@@ -175,13 +166,67 @@ class SshTunnel(private val viewModel: VncViewModel) {
                     connection.authenticateWithPublicKey(profile.sshUsername, keyPair)
                     KeyCache.put(pk, keyPair)
                 }
+
+                if (!connection.isAuthenticationComplete)
+                    throw SshTunnelException("SSH Key authentication failed")
             }
-            else -> throw IOException("Unknown SSH auth type: ${profile.sshAuthType}")
+            else -> throw SshTunnelException("Unknown SSH auth type: ${profile.sshAuthType}")
         }
+
+        if (!connection.isAuthenticationComplete)
+            throw SshTunnelException("SSH authentication failed")
     }
 
-    fun close() {
-        connection?.close()
+    private fun createPortForwarder(connection: Connection, profile: ServerProfile): TunnelGate {
+        // SSHLib does not expose internal ServerSocket used for local port forwarder.
+        // Hence, if we pass 0 as local port to let the system pick a port for us, we have no way
+        // to know the port system picked.
+        // So we create a temporary ServerSocket, close it immediately and try to use its port.
+        // But between the close-reuse, that port can be assigned to someone else, so we try again.
+        for (i in 1..50) {
+            val attemptedPort = ServerSocket(0).use { it.localPort }
+            val address = InetSocketAddress(localHost, attemptedPort)
+
+            try {
+                val forwarder = connection.createLocalPortForwarder(address, profile.host, profile.port)
+                return TunnelGate(localHost, attemptedPort, forwarder)
+            } catch (e: IOException) {
+                //Retry
+            } catch (e: Throwable) {
+                throw unwrapLibraryException(e)
+            }
+        }
+        throw SshTunnelException("Cannot find a local port for SSH Tunnel")
+    }
+
+    /**
+     * In many error conditions, SSHLib throws [IOException] with a generic message
+     * like 'An error happened when connecting'. This gives not indication to the user about
+     * actual cause of the error. So this function attempts to find the root cause of the
+     * error, and provide a better message to the user.
+     */
+    private fun unwrapLibraryException(e: Throwable): Throwable {
+        if (e is SshTunnelException) return e
+
+        // collect error history
+        val errors = mutableListOf(e)
+        var cause = e.cause
+        while (cause != null) {
+            errors.add(cause)
+            cause = cause.cause
+        }
+
+        errors.find { it is ErrnoException }?.let {
+            val msg = when ((it as ErrnoException).errno) {
+                OsConstants.ECONNREFUSED -> "SSH server is not running, or port is incorrect"
+                OsConstants.ECONNABORTED -> "SSH connection aborted"
+                OsConstants.ECONNRESET -> "SSH connection closed abruptly by remote host"
+                else -> "SSH: " + it.message?.substringAfter('(')?.substringBefore(')')
+            }
+            return SshTunnelException(msg, e)
+        }
+
+        return e
     }
 
     /**

@@ -12,24 +12,33 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.os.SystemClock
 import android.util.AttributeSet
+import android.util.Log
 import android.view.GestureDetector
 import android.view.GestureDetector.SimpleOnGestureListener
+import android.view.Gravity
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.View.MeasureSpec
 import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
+import android.widget.Button
 import android.widget.EditText
+import android.widget.GridLayout
 import android.widget.HorizontalScrollView
+import android.widget.ImageButton
 import android.widget.ToggleButton
+import androidx.annotation.DrawableRes
+import androidx.appcompat.widget.AppCompatEditText
 import androidx.core.content.ContextCompat
-import androidx.core.view.children
-import androidx.core.view.doOnLayout
-import androidx.recyclerview.widget.RecyclerView
-import androidx.viewpager2.widget.ViewPager2
+import androidx.viewpager.widget.PagerAdapter
+import androidx.viewpager.widget.ViewPager
+import com.gaurav.avnc.R
 import com.gaurav.avnc.databinding.VirtualKeysBinding
+import com.gaurav.avnc.util.AppPreferences
+import kotlin.math.min
 import kotlin.math.sign
 
 
@@ -41,6 +50,7 @@ import kotlin.math.sign
  */
 class VirtualKeys(activity: VncActivity) {
 
+    private val viewModel = activity.viewModel
     private val pref = activity.viewModel.pref
     private val keyHandler = activity.keyHandler
     private val frameView = activity.binding.frameView
@@ -49,7 +59,6 @@ class VirtualKeys(activity: VncActivity) {
     private val lockedToggleKeys = mutableSetOf<ToggleButton>()
     private val keyCharMap by lazy { KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD) }
     private var openedWithKb = false
-    private var textPageIndex = 2
 
     val container: View? get() = stub.root
 
@@ -79,8 +88,8 @@ class VirtualKeys(activity: VncActivity) {
         }
     }
 
-    fun onConnected() {
-        if (pref.runInfo.showVirtualKeys)
+    fun onConnected(inPiP: Boolean) {
+        if (!inPiP && pref.runInfo.showVirtualKeys)
             show()
     }
 
@@ -109,75 +118,72 @@ class VirtualKeys(activity: VncActivity) {
 
         stub.viewStub?.inflate()
         val binding = stub.binding as VirtualKeysBinding
-        initControls(binding)
+        initTextPage(binding)
         initKeys(binding)
-        binding.tmpPageHost.doOnLayout { binding.root.post { initPager(binding) } }
+        initPager(binding)
         keyHandler.processedEventObserver = ::onAfterKeyEvent
     }
 
     /**
-     * This is a wierd way to do things, but I have not found an alternative yet.
-     *
-     * Basically, the optimal UX is:
-     * - Have several 'pages' of keys & controls. User can flip through them with horizontal swipe.
-     * - Take minimal horizontal space, i.e. don't use 'fill_parent' for width. If virtual keys are
-     *   stretched to full width in landscape mode, it leaves very little vertical room for FrameView.
-     *
-     * But using [ViewPager2] creates certain problems:
-     * - It doesn't support 'wrap_content', so we have to use a fixed width & height.
-     * - It also requires child views to use 'fill_parent' for width & height.
-     * - Cannot directly add child views to ViewPager2 in single XML layout.
-     *
-     * To workaround these limitations, all pages are initially attached to a LinearLayout.
-     * Once layout is complete (to allow proper calculation to width & height), the pages are removed
-     * from LinearLayout and attached to ViewPager2 via [PagerAdapter].
+     * To keep everything in single XML layout file, things are done in a slightly weird way.
+     * Both keys & text pages are initially attached to temporary View. After inflation, they
+     * are detached and passed onto ViewPager adapter. Adapter will insert them at proper place.
      */
     private fun initPager(binding: VirtualKeysBinding) {
-        val pages = binding.tmpPageHost.children.toList().filter { pref.input.vkShowAll || it != binding.secondaryKeyPage }
-        val maxPageWidth = pages.maxOf { it.width }
-        val maxPageHeight = pages.maxOf { it.height }
+        val root = binding.root
+        val keys = binding.keys
+        val pager = binding.pager
+        val pages = listOf(binding.keysPage, binding.textPage)
 
-        pages.forEach {
-            binding.tmpPageHost.removeView(it)
-            it.layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        binding.tmpPageHost.apply {
+            removeAllViews()
+            (parent as ViewGroup).removeView(this)
         }
 
-        textPageIndex = pages.indexOf(binding.textPage)
-
-        binding.pager.let {
-            it.offscreenPageLimit = pages.size
-            it.adapter = PagerAdapter(pages)
-            it.layoutParams = it.layoutParams.apply {
-                width = maxPageWidth + it.paddingLeft + it.paddingRight
-                height = maxPageHeight + it.paddingTop + it.paddingBottom
-            }
-            it.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
-                override fun onPageSelected(position: Int) {
-                    if (position == textPageIndex) {
-                        binding.textBox.requestFocus()
-                    }
+        // Setup pager
+        pager.offscreenPageLimit = pages.size
+        pager.adapter = object : PagerAdapter() {
+            override fun getCount() = pages.size
+            override fun isViewFromObject(view: View, obj: Any) = (view === obj)
+            override fun instantiateItem(container: ViewGroup, position: Int): Any {
+                pages[position].let {
+                    container.addView(it)
+                    return it
                 }
-            })
-        }
+            }
 
-        binding.tmpPageHost.visibility = View.GONE
+            override fun destroyItem(container: ViewGroup, position: Int, obj: Any) {
+                container.removeView(obj as View)
+            }
+        }
+        pager.addOnPageChangeListener(object : ViewPager.SimpleOnPageChangeListener() {
+            val textPageIndex = pages.indexOf(binding.textPage)
+            override fun onPageSelected(position: Int) {
+                if (position == textPageIndex) binding.textBox.requestFocus()
+                else frameView.requestFocus()
+            }
+        })
+
+        // Setup Layout. Keys grid is the primary View used for deciding size of Virtual keys.
+        // All keys are shown if screen is wide enough. Otherwise width is limited to FrameView,
+        // and HorizontalScrollView is relied upon to access all keys.
+        // NOTE: Paddings in root/pager view is NOT handled by this code.
+
+        // Start with something sane
+        MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED).let { keys.measure(it, it) }
+        root.layoutParams = root.layoutParams.apply { width = keys.measuredWidth; height = keys.measuredHeight }
+
+        // Update size after layout changes
+        keys.viewTreeObserver.addOnGlobalLayoutListener {
+            val w = min(keys.width, frameView.width)
+            val h = keys.height
+            if (w > 0 && h > 0 && (root.width != w || root.height != h))
+                root.layoutParams = root.layoutParams.apply { width = w; height = h }
+        }
     }
 
-    private inner class PagerAdapter(private val views: List<View>) : RecyclerView.Adapter<PagerAdapter.ViewHolder>() {
-        private inner class ViewHolder(v: View) : RecyclerView.ViewHolder(v)
 
-        override fun getItemCount() = views.size
-        override fun getItemViewType(position: Int) = position
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) = ViewHolder(views[viewType])
-        override fun onBindViewHolder(holder: ViewHolder, position: Int) {}
-    }
-
-    private fun initControls(binding: VirtualKeysBinding) {
-        binding.toggleKeyboard.setOnClickListener {
-            @Suppress("DEPRECATION")
-            ContextCompat.getSystemService(frameView.context, InputMethodManager::class.java)
-                    ?.toggleSoftInput(0, 0)
-        }
+    private fun initTextPage(binding: VirtualKeysBinding) {
         binding.textPageBackBtn.setOnClickListener {
             binding.pager.setCurrentItem(0, true)
         }
@@ -188,43 +194,32 @@ class VirtualKeys(activity: VncActivity) {
         binding.textBox.setOnFocusChangeListener { _, hasFocus ->
             if (!hasFocus) frameView.requestFocus()
         }
-        binding.closeBtn.setOnClickListener {
-            hide(true)
+        binding.textBox.onTextCopyListener = {
+            viewModel.sendClipboardText()
         }
+
     }
 
     private fun initKeys(binding: VirtualKeysBinding) {
-        initToggleKey(binding.vkSuper, KeyEvent.KEYCODE_META_LEFT)
-        initToggleKey(binding.vkShift, KeyEvent.KEYCODE_SHIFT_RIGHT) // See if we can switch to 'LEFT' versions of these
-        initToggleKey(binding.vkAlt, KeyEvent.KEYCODE_ALT_RIGHT)
-        initToggleKey(binding.vkCtrl, KeyEvent.KEYCODE_CTRL_RIGHT)
+        VirtualKeyLayoutConfig.getLayout(pref).forEach { vk ->
+            val view = VirtualKeyViewFactory.create(binding.root.context, vk)
+            binding.keys.addView(view)
 
-        initNormalKey(binding.vkEsc, KeyEvent.KEYCODE_ESCAPE)
-        initNormalKey(binding.vkTab, KeyEvent.KEYCODE_TAB)
-        initNormalKey(binding.vkHome, KeyEvent.KEYCODE_MOVE_HOME)
-        initNormalKey(binding.vkEnd, KeyEvent.KEYCODE_MOVE_END)
-        initNormalKey(binding.vkPageUp, KeyEvent.KEYCODE_PAGE_UP)
-        initNormalKey(binding.vkPageDown, KeyEvent.KEYCODE_PAGE_DOWN)
-        initNormalKey(binding.vkInsert, KeyEvent.KEYCODE_INSERT)
-        initNormalKey(binding.vkDelete, KeyEvent.KEYCODE_FORWARD_DEL)
-
-        initNormalKey(binding.vkLeft, KeyEvent.KEYCODE_DPAD_LEFT)
-        initNormalKey(binding.vkRight, KeyEvent.KEYCODE_DPAD_RIGHT)
-        initNormalKey(binding.vkUp, KeyEvent.KEYCODE_DPAD_UP)
-        initNormalKey(binding.vkDown, KeyEvent.KEYCODE_DPAD_DOWN)
-
-        initNormalKey(binding.vkF1, KeyEvent.KEYCODE_F1)
-        initNormalKey(binding.vkF2, KeyEvent.KEYCODE_F2)
-        initNormalKey(binding.vkF3, KeyEvent.KEYCODE_F3)
-        initNormalKey(binding.vkF4, KeyEvent.KEYCODE_F4)
-        initNormalKey(binding.vkF5, KeyEvent.KEYCODE_F5)
-        initNormalKey(binding.vkF6, KeyEvent.KEYCODE_F6)
-        initNormalKey(binding.vkF7, KeyEvent.KEYCODE_F7)
-        initNormalKey(binding.vkF8, KeyEvent.KEYCODE_F8)
-        initNormalKey(binding.vkF9, KeyEvent.KEYCODE_F9)
-        initNormalKey(binding.vkF10, KeyEvent.KEYCODE_F10)
-        initNormalKey(binding.vkF11, KeyEvent.KEYCODE_F11)
-        initNormalKey(binding.vkF12, KeyEvent.KEYCODE_F12)
+            if (vk == VirtualKey.ToggleKeyboard) {
+                view.setOnClickListener {
+                    @Suppress("DEPRECATION")
+                    ContextCompat.getSystemService(frameView.context, InputMethodManager::class.java)
+                            ?.toggleSoftInput(0, 0)
+                }
+            } else if (vk == VirtualKey.CloseKeys) {
+                view.setOnClickListener { hide(true) }
+            } else if (vk.keyCode != null) {
+                if (view is ToggleButton)
+                    initToggleKey(view, vk.keyCode)
+                else
+                    initNormalKey(view, vk.keyCode)
+            }
+        }
     }
 
 
@@ -295,9 +290,217 @@ class VirtualKeys(activity: VncActivity) {
 }
 
 /**
- * Horizontal scroll view with support for horizontally scrollable child views, e.g. ViewPager.
+ * NOTE: Names of these enums may be persisted in app preferences. So if any key name
+ *       is ever modified, add a migration to handle old name.
  */
-class NestableHorizontalScrollView(context: Context, attributeSet: AttributeSet? = null) : HorizontalScrollView(context, attributeSet) {
+enum class VirtualKey(
+        /**
+         * [KeyEvent] keycode to be generated when this key is pressed.
+         */
+        val keyCode: Int? = null,
+
+        /**
+         * If key name is not appropriate for UI, use this to set the label.
+         */
+        val label: String? = null,
+
+        /**
+         * If icon is set, this key will be rendered as an ImageButton.
+         */
+        @DrawableRes
+        val icon: Int? = null,
+
+        /**
+         * Short description of the key, if the itself isn't sufficient.
+         */
+        val description: String? = null,
+
+        val isToggle: Boolean = false,
+) {
+
+    // Special actions
+    ToggleKeyboard(description = "Toggle keyboard", icon = R.drawable.ic_keyboard),
+    CloseKeys(description = "Close virtual keys", icon = R.drawable.ic_clear),
+
+    // Meta keys
+    RightShift(keyCode = KeyEvent.KEYCODE_SHIFT_RIGHT, label = "Shift", isToggle = true),
+    RightCtrl(keyCode = KeyEvent.KEYCODE_CTRL_RIGHT, label = "Ctrl", isToggle = true),
+    RightAlt(keyCode = KeyEvent.KEYCODE_ALT_RIGHT, label = "Alt", isToggle = true),
+    RightSuper(keyCode = KeyEvent.KEYCODE_META_RIGHT, label = "Super", icon = R.drawable.ic_super_key, isToggle = true),
+
+    Esc(keyCode = KeyEvent.KEYCODE_ESCAPE),
+    Tab(keyCode = KeyEvent.KEYCODE_TAB),
+    Home(keyCode = KeyEvent.KEYCODE_MOVE_HOME),
+    End(keyCode = KeyEvent.KEYCODE_MOVE_END),
+    PgUp(keyCode = KeyEvent.KEYCODE_PAGE_UP),
+    PgDn(keyCode = KeyEvent.KEYCODE_PAGE_DOWN),
+    Insert(keyCode = KeyEvent.KEYCODE_INSERT),
+    Delete(keyCode = KeyEvent.KEYCODE_FORWARD_DEL),
+
+    // Arrow keys
+    Left(keyCode = KeyEvent.KEYCODE_DPAD_LEFT, icon = R.drawable.ic_keyboard_arrow_left),
+    Right(keyCode = KeyEvent.KEYCODE_DPAD_RIGHT, icon = R.drawable.ic_keyboard_arrow_right),
+    Up(keyCode = KeyEvent.KEYCODE_DPAD_UP, icon = R.drawable.ic_keyboard_arrow_up),
+    Down(keyCode = KeyEvent.KEYCODE_DPAD_DOWN, icon = R.drawable.ic_keyboard_arrow_down),
+
+    F1(keyCode = KeyEvent.KEYCODE_F1),
+    F2(keyCode = KeyEvent.KEYCODE_F2),
+    F3(keyCode = KeyEvent.KEYCODE_F3),
+    F4(keyCode = KeyEvent.KEYCODE_F4),
+    F5(keyCode = KeyEvent.KEYCODE_F5),
+    F6(keyCode = KeyEvent.KEYCODE_F6),
+    F7(keyCode = KeyEvent.KEYCODE_F7),
+    F8(keyCode = KeyEvent.KEYCODE_F8),
+    F9(keyCode = KeyEvent.KEYCODE_F9),
+    F10(keyCode = KeyEvent.KEYCODE_F10),
+    F11(keyCode = KeyEvent.KEYCODE_F11),
+    F12(keyCode = KeyEvent.KEYCODE_F12),
+}
+
+/**
+ * Users can change the layout of keys in app settings.
+ * Layout configuration is stored as a simple list of key-names.
+ */
+object VirtualKeyLayoutConfig {
+
+    private val DEFAULT_LAYOUT = listOf(VirtualKey.ToggleKeyboard, VirtualKey.CloseKeys, VirtualKey.Esc, VirtualKey.RightSuper,
+                                        VirtualKey.Tab, VirtualKey.RightCtrl, VirtualKey.RightShift, VirtualKey.RightAlt,
+                                        VirtualKey.Home, VirtualKey.Left, VirtualKey.Up, VirtualKey.Down, VirtualKey.End,
+                                        VirtualKey.Right, VirtualKey.PgUp, VirtualKey.PgDn)
+
+    /**
+     * In older versions, before users could customize key layout, there was a pref to
+     * 'Show all' keys. This layout is used for compatibility with that pref.
+     */
+    private val DEFAULT_LAYOUT_ALL = DEFAULT_LAYOUT +
+                                     listOf(VirtualKey.Insert, VirtualKey.Delete, VirtualKey.F1, VirtualKey.F2, VirtualKey.F3,
+                                            VirtualKey.F4, VirtualKey.F5, VirtualKey.F6, VirtualKey.F7, VirtualKey.F8,
+                                            VirtualKey.F9, VirtualKey.F10, VirtualKey.F11, VirtualKey.F12)
+
+
+    fun getDefaultLayout(pref: AppPreferences): List<VirtualKey> {
+        return if (pref.input.vkShowAll) DEFAULT_LAYOUT_ALL else DEFAULT_LAYOUT
+    }
+
+    fun getLayout(pref: AppPreferences): List<VirtualKey> {
+        runCatching {
+            pref.input.vkLayout?.let { vkLayout ->
+                vkLayout.split(',').map { VirtualKey.valueOf(it) }.let { keys ->
+                    check(keys.isNotEmpty())
+                    return keys
+                }
+            }
+        }.onFailure { Log.e(javaClass.simpleName, "Error parsing key layout [${pref.input.vkLayout}]: ", it) }
+
+        return getDefaultLayout(pref)
+    }
+
+    fun setLayout(pref: AppPreferences, keys: List<VirtualKey>) {
+        if (keys == getDefaultLayout(pref) && pref.input.vkLayout != null) {
+            // Restoring the defaults, so simply remove the pref.
+            // Pref is only used if user changes the default layout.
+            pref.input.vkLayout = null
+            return
+        }
+
+        if (keys == getLayout(pref))
+            return   // Nothing changed
+
+        pref.input.vkLayout = keys.joinToString(",") { it.name }
+    }
+}
+
+/**
+ * Factory for creating individual key [View]s.
+ */
+object VirtualKeyViewFactory {
+
+    /**
+     * There are three types of Views tht are generated:
+     *
+     * [ToggleButton] - if [key] is a toggle
+     * [ImageButton]  - if [key] has an icon (label will be ignored)
+     * [Button]       - in all other cases
+     */
+    fun create(context: Context, key: VirtualKey): View {
+        val view = if (key.isToggle) createToggle(context, key) else createSimple(context, key)
+        view.layoutParams = GridLayout.LayoutParams().apply {
+            width = GridLayout.LayoutParams.WRAP_CONTENT
+            height = GridLayout.LayoutParams.WRAP_CONTENT
+            setGravity(Gravity.CENTER)
+        }
+        return view
+    }
+
+    private fun createSimple(context: Context, key: VirtualKey): View {
+        return if (key.icon != null)
+            ImageButton(context, null, 0, selectStyle(key))
+                    .apply {
+                        setImageDrawable(ContextCompat.getDrawable(context, key.icon))
+                        contentDescription = getDescription(key)
+                    }
+        else
+            Button(context, null, 0, selectStyle(key))
+                    .apply { text = getLabel(key) }
+    }
+
+    private fun createToggle(context: Context, key: VirtualKey): View {
+        val view = ToggleButton(context, null, 0, selectStyle(key))
+        view.isClickable = true
+
+        if (key.icon != null) {
+            view.setCompoundDrawablesRelativeWithIntrinsicBounds(key.icon, 0, 0, 0)
+            view.contentDescription = getDescription(key)
+        } else {
+            val label = getLabel(key)
+            view.text = label
+            view.textOff = label
+            view.textOn = label
+        }
+
+        return view
+    }
+
+    private fun selectStyle(key: VirtualKey): Int {
+        if (key == VirtualKey.CloseKeys || key == VirtualKey.ToggleKeyboard)
+            return R.style.VirtualKey_Special
+
+        if (key.isToggle) {
+            return if (key.icon != null) R.style.VirtualKey_Toggle_Image else R.style.VirtualKey_Toggle
+        }
+
+        return R.style.VirtualKey
+    }
+
+    private fun getLabel(virtualKey: VirtualKey) = virtualKey.label ?: virtualKey.name
+    private fun getDescription(virtualKey: VirtualKey) = virtualKey.description ?: getLabel(virtualKey)
+}
+
+/**
+ * Simple extension to add hook for Copy action.
+ */
+class VkEditText(context: Context, attributeSet: AttributeSet? = null) : AppCompatEditText(context, attributeSet) {
+
+    var onTextCopyListener: (() -> Unit)? = null
+
+    override fun onTextContextMenuItem(id: Int): Boolean {
+        val result = super.onTextContextMenuItem(id)
+        if (result && (id == android.R.id.cut || id == android.R.id.copy)) {
+            onTextCopyListener?.invoke()
+        }
+        return result
+    }
+}
+
+/**
+ * Stock [HorizontalScrollView] intercepts all scroll events irrespective of whether
+ * it can actually scroll or not. It makes it unsuitable for use as child/parent of
+ * another horizontally scrollable View, e.g. ViewPager.
+ *
+ * [NestableHorizontalScrollView] fixes this by only intercepting events when it is scrollable.
+ */
+class NestableHorizontalScrollView(context: Context, attributeSet: AttributeSet? = null) :
+        HorizontalScrollView(context, attributeSet) {
     /**
      * Direction of current horizontal scrolling.
      * See [canScrollHorizontally].

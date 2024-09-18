@@ -11,6 +11,7 @@ package com.gaurav.avnc.viewmodel
 import android.app.Application
 import android.graphics.RectF
 import android.util.Log
+import android.widget.Toast
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
 import com.gaurav.avnc.model.LoginInfo
@@ -19,6 +20,8 @@ import com.gaurav.avnc.ui.vnc.FrameScroller
 import com.gaurav.avnc.ui.vnc.FrameState
 import com.gaurav.avnc.ui.vnc.FrameView
 import com.gaurav.avnc.util.LiveRequest
+import com.gaurav.avnc.util.SingleShotFlag
+import com.gaurav.avnc.util.broadcastWoLPackets
 import com.gaurav.avnc.util.getClipboardText
 import com.gaurav.avnc.util.setClipboardText
 import com.gaurav.avnc.viewmodel.service.HostKey
@@ -27,11 +30,7 @@ import com.gaurav.avnc.vnc.Messenger
 import com.gaurav.avnc.vnc.UserCredential
 import com.gaurav.avnc.vnc.VncClient
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import java.io.IOException
 import java.lang.ref.WeakReference
 import kotlin.concurrent.thread
@@ -171,6 +170,17 @@ class VncViewModel(val profile: ServerProfile, app: Application) : BaseViewModel
      */
     val sshHostKeyVerifyRequest = LiveRequest<HostKey, Boolean>(false, viewModelScope)
 
+    /**
+     * Indicates if this view model has been cleared.
+     * Used by the receiver thread to control it's execution.
+     */
+    private val viewModelClearedFlag = SingleShotFlag()
+
+    override fun onCleared() {
+        super.onCleared()
+        viewModelClearedFlag.set()
+    }
+
 
     /**************************************************************************
      * Connection management
@@ -216,6 +226,15 @@ class VncViewModel(val profile: ServerProfile, app: Application) : BaseViewModel
 
         if (profile.useRepeater)
             client.setupRepeater(profile.idOnRepeater)
+
+        if (profile.enableWol)
+            runCatching { broadcastWoLPackets(profile.wolMAC) }
+                    .onFailure {
+                        launchMain {
+                            Toast.makeText(app, "Wake-on-LAN: ${it.message}", Toast.LENGTH_LONG).show()
+                            Log.w(javaClass.simpleName, "Cannot send WoL packet", it)
+                        }
+                    }
     }
 
     private fun connect() {
@@ -238,15 +257,13 @@ class VncViewModel(val profile: ServerProfile, app: Application) : BaseViewModel
     }
 
     private fun processMessages() {
-        while (viewModelScope.isActive)
+        while (viewModelClearedFlag.isNotSet)
             client.processServerMessage()
     }
 
     private fun cleanup() {
         //Wait until activity is finished and viewmodel is cleaned up.
-        if (viewModelScope.isActive) {
-            runCatching { runBlocking { launch { awaitCancellation() } } }
-        }
+        viewModelClearedFlag.await()
 
         messenger.cleanup()
         client.cleanup()
@@ -380,15 +397,22 @@ class VncViewModel(val profile: ServerProfile, app: Application) : BaseViewModel
     }
 
     fun pauseFrameBufferUpdates() {
-        //client.setAutomaticFrameBufferUpdates(false)
+        messenger.pauseFramebufferUpdates(true)
     }
 
     fun resumeFrameBufferUpdates() {
-        //client.setAutomaticFrameBufferUpdates(true)
+        messenger.pauseFramebufferUpdates(false)
     }
 
     fun refreshFrameBuffer() {
         messenger.refreshFrameBuffer()
+    }
+
+    /**
+     * Resolves applicable gesture style.
+     */
+    fun resolveGestureStyle(): String {
+        return if (profile.gestureStyle == "auto") pref.input.gesture.style else profile.gestureStyle
     }
 
     /**************************************************************************

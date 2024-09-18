@@ -185,7 +185,7 @@
     <string name="title_resize_remote_desktop">缩放远程会话到本地窗口</string>
     <string name="msg_zoom_reset_default">重置缩放到默认值</string>
     <string name="msg_shortcut_server_deleted">该服务器已被删除</string>
-    <string name="pref_display_cutout">在异形屏区域显示（试验性）</string>
+    <string name="pref_display_cutout">扩展到刘海屏</string>
     <string name="title_ssh_login">SSH登录</string>
     <string name="title_unlock_private_key">解锁私钥</string>
     <string name="pref_double_tap_swipe">双击轻扫</string>
@@ -195,4 +195,30 @@
     <string name="msg_button_up_delay_help">在某些罕见的情况下，如果应用程序无法响应点击，延迟点击事件会有所帮助。</string>
     <string name="pref_long_press_swipe">长按轻扫</string>
     <string name="pref_auto_reconnect">自动重连</string>
+    <string name="title_next">下一则</string>
+    <string name="pref_keep_screen_on">保持屏幕亮起</string>
+    <string name="pref_show_gesture_style_toggle">显示手势样式切换</string>
+    <string name="tip_toolbar_usage">从边缘向内滑动打开工具栏。用它来打开键盘、更改手势样式，或重设缩放。</string>
+    <string name="title_got_it">知道了</string>
+    <string name="hint_ssh_host">SSH 主机</string>
+    <string name="hint_ssh_port">SSH 端口</string>
+    <string name="msg_zoom_locked">缩放已锁定</string>
+    <string name="msg_zoom_unlocked">缩放已解锁</string>
+    <string name="msg_pk_password_not_saved">AVNC 不再保存私钥以改进安全性。</string>
+    <string name="msg_viewer_tips_label">从几则小提示开始吧</string>
+    <string name="desc_lock_zoom_btn">锁定缩放</string>
+    <string name="tip_session_end">要结束会话，轻按返回导航按钮，就像你退出视频播放所做的那样。</string>
+    <string name="pref_toolbar_open_with_swipe">从边缘向内滑动来打开</string>
+    <string name="title_connect_on_app_start">应用启动时自动连接</string>
+    <string name="hint_send_text_to_server">发送文本到服务器</string>
+    <string name="title_enable_wol">局域网唤醒</string>
+    <string name="hint_wol_mac">MAC 地址</string>
+    <string name="msg_wake_on_lan_help">局域网唤醒（Wake-on-LAN） 可用于远程启动一台计算机。
+\n
+\n首先，在远程计算机上配置 WoL，然后在 AVNC 中启用它。
+\n启用后，在连接到此服务器前，将自动发送 WoL 魔法数据包。</string>
+    <string name="title_load_defaults">加载默认</string>
+    <string name="msg_saved">已保存</string>
+    <string name="pref_customize_virtual_keys">自定义密钥</string>
+    <string name="msg_tap_to_select_a_key">轻按选择密钥：</string>
 </resources>

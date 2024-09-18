@@ -9,6 +9,7 @@
 package com.gaurav.avnc.ui.vnc
 
 import android.app.Dialog
+import android.content.DialogInterface
 import android.os.Bundle
 import android.util.ArrayMap
 import android.util.Log
@@ -58,20 +59,31 @@ class LoginFragment : DialogFragment() {
         binding.passwordLayout.isVisible = loginInfo.password.isBlank()
         binding.remember.isVisible = viewModel.profile.ID != 0L && loginType != LoginInfo.Type.SSH_KEY_PASSWORD
 
+        binding.password.setOnEditorActionListener { _, _, _ ->
+            onOk()
+            dismiss()
+            true
+        }
+
         if (loginType == LoginInfo.Type.SSH_KEY_PASSWORD) {
             binding.passwordLayout.setHint(R.string.hint_key_password)
             binding.pkPasswordMsg.isVisible = viewModel.profile.sshPrivateKeyPassword.isNotBlank()
         }
 
         setupAutoComplete()
-        isCancelable = false
 
         return MaterialAlertDialogBuilder(requireContext())
                 .setTitle(getTitle())
                 .setView(binding.root)
                 .setPositiveButton(android.R.string.ok) { _, _ -> onOk() }
                 .setNegativeButton(android.R.string.cancel) { _, _ -> onCancel() }
-                .create()
+                .create().apply {
+                    setCanceledOnTouchOutside(false)
+                }
+    }
+
+    override fun onCancel(dialog: DialogInterface) {
+        onCancel()
     }
 
     private fun getTitle() = when (loginType) {
@@ -110,7 +122,6 @@ class LoginFragment : DialogFragment() {
     }
 
     private fun onCancel() {
-        viewModel.loginInfoRequest.cancelRequest()
         requireActivity().finish()
     }
 

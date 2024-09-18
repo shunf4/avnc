@@ -10,7 +10,6 @@ package com.gaurav.avnc.ui.vnc
 
 import android.app.Activity
 import android.app.PictureInPictureParams
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
@@ -29,7 +28,6 @@ import android.widget.Toast
 import androidx.activity.viewModels
 import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.core.os.BundleCompat
 import androidx.core.view.isVisible
 import androidx.databinding.DataBindingUtil
@@ -88,12 +86,12 @@ class VncActivity : AppCompatActivity() {
     lateinit var viewModel: VncViewModel
     lateinit var binding: ActivityVncBinding
     private val dispatcher by lazy { Dispatcher(this) }
-    val touchHandler by lazy { TouchHandler(viewModel, dispatcher) }
+    val touchHandler by lazy { TouchHandler(binding.frameView, dispatcher, viewModel.pref) }
     val keyHandler by lazy { KeyHandler(dispatcher, viewModel.profile.fLegacyKeySym, viewModel.pref) }
     val virtualKeys by lazy { VirtualKeys(this) }
+    val toolbar by lazy { Toolbar(this, dispatcher) }
     private val serverUnlockPrompt = DeviceAuthPrompt(this)
     private val layoutManager by lazy { LayoutManager(this) }
-    private val toolbar by lazy { Toolbar(this, dispatcher) }
     private var restoredFromBundle = false
     private var wasConnectedWhenStopped = false
     private var onStartTime = 0L
@@ -135,7 +133,6 @@ class VncActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         binding.frameView.onResume()
-        viewModel.resumeFrameBufferUpdates()
         onStartTime = SystemClock.uptimeMillis()
 
         // Refresh framebuffer on activity restart:
@@ -143,14 +140,18 @@ class VncActivity : AppCompatActivity() {
         //   been closed by the server while app process was frozen in background
         // - It also attempts to fix some unusual cases of old updates requests being lost while AVNC
         //   was frozen by the system
-        if (wasConnectedWhenStopped) viewModel.refreshFrameBuffer()
+        if (viewModel.pref.viewer.pauseUpdatesInBackground)
+            viewModel.resumeFrameBufferUpdates()
+        else if (wasConnectedWhenStopped)
+            viewModel.refreshFrameBuffer()
     }
 
     override fun onStop() {
         super.onStop()
         virtualKeys.releaseMetaKeys()
         binding.frameView.onPause()
-        viewModel.pauseFrameBufferUpdates()
+        if (viewModel.pref.viewer.pauseUpdatesInBackground)
+            viewModel.pauseFrameBufferUpdates()
         wasConnectedWhenStopped = viewModel.state.value.isConnected
     }
 
@@ -237,7 +238,7 @@ class VncActivity : AppCompatActivity() {
         if (isConnected) {
             ViewerHelp().onConnected(this)
             keyHandler.enableMacOSCompatibility = viewModel.client.isConnectedToMacOS
-            virtualKeys.onConnected()
+            virtualKeys.onConnected(isInPiPMode())
         }
 
         if (isConnected && !restoredFromBundle) {
@@ -277,9 +278,10 @@ class VncActivity : AppCompatActivity() {
         if (wasConnectedWhenStopped && (SystemClock.uptimeMillis() - onStartTime) in 0..2000) {
             Log.d(javaClass.simpleName, "Disconnected while in background, reconnecting ...")
             retryConnection(true)
+            return
         }
 
-        if (autoReconnecting || !viewModel.pref.server.autoReconnect)
+        if ((autoReconnecting || !viewModel.pref.server.autoReconnect) && !viewModel.profile.enableWol)
             return
 
         autoReconnecting = true
@@ -296,24 +298,6 @@ class VncActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Clipboard changes are only subscribed to while App has focus. We don't want to access clipboard
-     * from background (newer Android versions already restricts this). This listener is primarily needed
-     * for clip changes initiated from the Text Box in Virtual Keys.
-     */
-    private val clipChangeListener = ClipboardManager.OnPrimaryClipChangedListener { viewModel.sendClipboardText() }
-    private var clipChangeListenerEnabled = false
-
-    private fun toggleClipboardListener(enable: Boolean) {
-        if (clipChangeListenerEnabled == enable)
-            return
-
-        ContextCompat.getSystemService(this, ClipboardManager::class.java)?.let {
-            if (enable) it.addPrimaryClipChangedListener(clipChangeListener)
-            else it.removePrimaryClipChangedListener(clipChangeListener)
-            clipChangeListenerEnabled = enable
-        }
-    }
 
     /************************************************************************************
      * Layout handling.
@@ -345,13 +329,16 @@ class VncActivity : AppCompatActivity() {
         super.onWindowFocusChanged(hasFocus)
         layoutManager.onWindowFocusChanged(hasFocus)
         if (hasFocus) viewModel.sendClipboardText()
-        toggleClipboardListener(hasFocus)
     }
 
 
     /************************************************************************************
      * Picture-in-Picture support
      ************************************************************************************/
+
+    private fun isInPiPMode(): Boolean {
+        return Build.VERSION.SDK_INT >= 24 && isInPictureInPictureMode
+    }
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()

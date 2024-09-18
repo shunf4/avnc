@@ -32,7 +32,7 @@ class AppPreferences(context: Context) {
         val orientation; get() = prefs.getString("viewer_orientation", "auto")
         val fullscreen; get() = prefs.getBoolean("fullscreen_display", true)
         val pipEnabled; get() = prefs.getBoolean("pip_enabled", false)
-        val drawBehindCutout; get() = prefs.getBoolean("viewer_draw_behind_cutout", false)
+        val drawBehindCutout; get() = fullscreen && prefs.getBoolean("viewer_draw_behind_cutout", false)
         val keepScreenOn; get() = prefs.getBoolean("keep_screen_on", true)
         val toolbarAlignment; get() = prefs.getString("toolbar_alignment", "start")
         val toolbarOpenWithSwipe; get() = prefs.getBoolean("toolbar_open_with_swipe", true)
@@ -40,6 +40,7 @@ class AppPreferences(context: Context) {
         val zoomMin; get() = prefs.getInt("zoom_min", 50) / 100F
         val perOrientationZoom; get() = prefs.getBoolean("per_orientation_zoom", true)
         val toolbarShowGestureStyleToggle; get() = prefs.getBoolean("toolbar_show_gesture_style_toggle", true)
+        val pauseUpdatesInBackground; get() = prefs.getBoolean("pause_fb_updates_in_background", false)
     }
 
     inner class Gesture {
@@ -54,6 +55,7 @@ class AppPreferences(context: Context) {
         val edgeScrollWidth; get() = Integer.parseInt(prefs.getString("edge_scroll_width", "150")!!)
         val longPressSwipe; get() = prefs.getString("gesture_long_press_swipe", "none")!!
         val longPressSwipeEnabled; get() = (longPressSwipe != "none")
+        val longPressDetectionEnabled; get() = (longPress != "none" || longPressSwipeEnabled)
         val swipeSensitivity; get() = prefs.getInt("gesture_swipe_sensitivity", 10) / 10f
         val invertVerticalScrolling; get() = prefs.getBoolean("invert_vertical_scrolling", false)
         val directModeTapOnlyPlacesMouse; get() = prefs.getBoolean("direct_mode_tap_only_places_mouse", false)
@@ -64,6 +66,7 @@ class AppPreferences(context: Context) {
 
         val vkOpenWithKeyboard; get() = prefs.getBoolean("vk_open_with_keyboard", false)
         val vkShowAll; get() = prefs.getBoolean("vk_show_all", false)
+        var vkLayout by StringPref("vk_keys_layout", null)
 
         val mousePassthrough; get() = prefs.getBoolean("mouse_passthrough", true)
         val hideLocalCursor; get() = prefs.getBoolean("hide_local_cursor", false)
@@ -107,6 +110,7 @@ class AppPreferences(context: Context) {
     }
 
     inner class BooleanPref(val key: String, default: Boolean) : Pref<Boolean>({ getBoolean(key, default) }, { putBoolean(key, it) })
+    inner class StringPref(val key: String, default: String?) : Pref<String?>({ getString(key, default) }, { putString(key, it) })
 
     /**
      * For some preference changes we want to provide live feedback to user.

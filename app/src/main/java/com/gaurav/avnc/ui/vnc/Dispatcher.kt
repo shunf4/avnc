@@ -65,7 +65,7 @@ class Dispatcher(private val activity: VncActivity) {
     private var config = Config()
 
     private inner class Config {
-        val gestureStyle = if (profile.gestureStyle == "auto") gesturePref.style else profile.gestureStyle
+        val gestureStyle = viewModel.resolveGestureStyle()
         val defaultMode = if (gestureStyle == "touchscreen") directMode else relativeMode
 
         val tap1Action = selectPointAction(gesturePref.tap1)
@@ -254,7 +254,7 @@ class Dispatcher(private val activity: VncActivity) {
             transformPoint1(p)?.let { messenger.sendPointerButtonRelease(it) }
         }
 
-        fun doClick(button: PointerButton, p: PointF) {
+        open fun doClick(button: PointerButton, p: PointF) {
 //            Log.i("doClick", "doClick " + button + " " + p)
             doButtonDown(button, p)
             // Some (obscure) apps seems to ignore click event if button-up is received too early
@@ -317,6 +317,24 @@ class Dispatcher(private val activity: VncActivity) {
         override fun transformPoint(p: PointF) = viewModel.frameState.toFb(p)
         override fun doMovePointer(p: PointF, dx: Float, dy: Float) = doButtonDown(PointerButton.None, p)
         override fun doRemoteDrag(button: PointerButton, p: PointF, dx: Float, dy: Float) = doButtonDown(button, p)
+        override fun doClick(button: PointerButton, p: PointF) {
+            if (transformPoint(p) != null)
+                super.doClick(button, p)
+            else if (button == PointerButton.Left)
+                doMovePointer(coerceToFbEdge(p), 0f, 0f)
+        }
+
+        // When user taps outside the frame, move the pointer to edge of the frame
+        // It allows opening of taskbar/panels when they are set to auto-hide.
+        // It can also be used for previewing taskbar items.
+        private fun coerceToFbEdge(p: PointF) = viewModel.frameState.let {
+            it.toVP(
+                    it.toFbUnchecked(p).apply {
+                        x = x.coerceIn(0f, it.fbWidth - 1)
+                        y = y.coerceIn(0f, it.fbHeight - 1)
+                    }
+            )
+        }
     }
 
     /**

@@ -329,8 +329,6 @@ class TouchHandler(private val frameView: FrameView, private val dispatcher: Dis
         private var longPressDetected = false
         private var doubleTapDetected = false
         private var scrolling = false
-        private var cumulatedX = 0f
-        private var cumulatedY = 0f
         private var maxFingerDown = 0
         private var currentDownEvent: MotionEvent? = null
         private var cumulatedX = 0f

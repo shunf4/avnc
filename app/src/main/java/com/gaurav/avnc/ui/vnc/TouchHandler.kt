@@ -47,7 +47,8 @@ class TouchHandler(private val frameView: FrameView, private val dispatcher: Dis
         /**
          * shunf4 mod: On Onyx BOOX devices, touch events has [InputDevice.SOURCE_STYLUS] set. We don't want that.
          */
-        event.source = event.source and InputDevice.SOURCE_STYLUS.inv()
+        event.source = event.source and (InputDevice.SOURCE_STYLUS and InputDevice.SOURCE_CLASS_POINTER.inv()).inv()
+
         val handled = handleStylusEvent(event) || handleMouseEvent(event) || handleGestureEvent(event)
         handleGestureStartStop(event)
         return handled

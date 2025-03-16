@@ -34,8 +34,6 @@ import androidx.databinding.DataBindingUtil
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import androidx.lifecycle.viewmodel.initializer
-import androidx.lifecycle.viewmodel.viewModelFactory
 import com.gaurav.avnc.R
 import com.gaurav.avnc.databinding.ActivityVncBinding
 import com.gaurav.avnc.model.ServerProfile
@@ -53,11 +51,16 @@ import java.lang.ref.WeakReference
 /********** [VncActivity] startup helpers *********************************/
 
 private const val PROFILE_KEY = "com.gaurav.avnc.server_profile"
+private const val PROFILE_ID_KEY = "com.gaurav.avnc.server_profile_id"
 private const val FRAME_STATE_KEY = "com.gaurav.avnc.frame_state"
+private const val AUTO_RECONNECT_DELAY_KEY = "com.gaurav.avnc.auto_reconnect_delay"
 
 fun createVncIntent(context: Context, profile: ServerProfile): Intent {
     return Intent(context, VncActivity::class.java).apply {
-        putExtra(PROFILE_KEY, profile)
+        if (profile.ID != 0L)
+            putExtra(PROFILE_ID_KEY, profile.ID)
+        else
+            putExtra(PROFILE_KEY, profile)
     }
 }
 
@@ -72,8 +75,11 @@ fun startVncActivity(source: Activity, uri: VncUri) {
 @Parcelize
 private data class SavedFrameState(val frameX: Float, val frameY: Float, val zoom1: Float, val zoom2: Float) : Parcelable
 
-private fun startVncActivity(source: Activity, profile: ServerProfile, frameState: SavedFrameState) {
-    source.startActivity(createVncIntent(source, profile).also { it.putExtra(FRAME_STATE_KEY, frameState) })
+private fun startVncActivity(source: Activity, profile: ServerProfile, frameState: SavedFrameState, autoReconnectDelay: Int) {
+    source.startActivity(createVncIntent(source, profile).also {
+        it.putExtra(FRAME_STATE_KEY, frameState)
+        it.putExtra(AUTO_RECONNECT_DELAY_KEY, autoReconnectDelay)
+    })
 }
 /**************************************************************************/
 
@@ -82,30 +88,30 @@ private fun startVncActivity(source: Activity, profile: ServerProfile, frameStat
  * This activity handles the connection to a VNC server.
  */
 class VncActivity : AppCompatActivity() {
+    private val TAG = "VncActivity"
 
-    lateinit var viewModel: VncViewModel
+    val viewModel by viewModels<VncViewModel>()
     lateinit var binding: ActivityVncBinding
     private val dispatcher by lazy { Dispatcher(this) }
-    val touchHandler by lazy { TouchHandler(binding.frameView, dispatcher, viewModel.pref) }
-    val keyHandler by lazy { KeyHandler(dispatcher, viewModel.profile.fLegacyKeySym, viewModel.pref) }
+    private val touchHandler by lazy { TouchHandler(binding.frameView, dispatcher, viewModel.pref) }
+    val keyHandler by lazy { KeyHandler(dispatcher, viewModel.pref) }
     val virtualKeys by lazy { VirtualKeys(this) }
-    val toolbar by lazy { Toolbar(this, dispatcher) }
+    val toolbar by lazy { Toolbar(this) }
     private val serverUnlockPrompt = DeviceAuthPrompt(this)
     private val layoutManager by lazy { LayoutManager(this) }
     private var restoredFromBundle = false
     private var wasConnectedWhenStopped = false
     private var onStartTime = 0L
+    private var autoReconnectDelay = 5
 
     override fun onCreate(savedInstanceState: Bundle?) {
         DeviceAuthPrompt.applyFingerprintDialogFix(supportFragmentManager)
 
         super.onCreate(savedInstanceState)
-        if (!loadViewModel(savedInstanceState)) {
+        if (!initConnection(savedInstanceState)) {
             finish()
             return
         }
-
-        viewModel.initConnection()
 
         //Main UI
         binding = DataBindingUtil.setContentView(this, R.layout.activity_vnc)
@@ -121,9 +127,12 @@ class VncActivity : AppCompatActivity() {
         //Observers
         binding.reconnectBtn.setOnClickListener { retryConnection() }
         viewModel.loginInfoRequest.observe(this) { showLoginDialog() }
-        viewModel.sshHostKeyVerifyRequest.observe(this) { showHostKeyDialog() }
+        viewModel.confirmationRequest.observe(this) { showConfirmationDialog() }
+        viewModel.activeGestureStyle.observe(this) { dispatcher.onGestureStyleChanged() }
         viewModel.state.observe(this) { onClientStateChanged(it) }
+        viewModel.profileLive.observe(this) { onProfileUpdated(it) }
 
+        autoReconnectDelay = intent.getIntExtra(AUTO_RECONNECT_DELAY_KEY, 5)
         savedInstanceState?.let {
             restoredFromBundle = true
             wasConnectedWhenStopped = it.getBoolean("wasConnectedWhenStopped")
@@ -157,26 +166,49 @@ class VncActivity : AppCompatActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        outState.putParcelable(PROFILE_KEY, viewModel.profile)
+        outState.putParcelable(PROFILE_KEY, viewModel.profileLive.value)
         outState.putBoolean("wasConnectedWhenStopped", wasConnectedWhenStopped || viewModel.state.value.isConnected)
     }
 
-    private fun loadViewModel(savedState: Bundle?): Boolean {
+    private fun initConnection(savedState: Bundle?): Boolean {
         @Suppress("DEPRECATION")
         val profile = savedState?.getParcelable(PROFILE_KEY)
                       ?: intent.getParcelableExtra<ServerProfile?>(PROFILE_KEY)
 
-        if (profile == null) {
+        if (profile != null) {
+            viewModel.initConnection(profile.copy()) // Use a copy to avoid modification to intent
+            return true
+        }
+
+        val profileId = intent.getLongExtra(PROFILE_ID_KEY, 0)
+        if (profileId == 0L) {
             Toast.makeText(this, "Error: Missing Server Info", Toast.LENGTH_LONG).show()
             return false
         }
 
-        val factory = viewModelFactory { initializer { VncViewModel(profile, application) } }
-        viewModel = viewModels<VncViewModel> { factory }.value
+        initConnectionFromId(profileId)
         return true
     }
 
-    private fun retryConnection(seamless: Boolean = false) {
+    private fun initConnectionFromId(profileId: Long) {
+        lifecycleScope.launch {
+            val profile = viewModel.getProfileById(profileId)
+            if (profile != null) {
+                viewModel.initConnection(profile)
+            } else {
+                Toast.makeText(this@VncActivity, "Error: Invalid Server ID", Toast.LENGTH_LONG).show()
+                Log.e(TAG, "Invalid profile ID passed via Intent: $profileId")
+                finish()
+            }
+        }
+    }
+
+    private fun onProfileUpdated(profile: ServerProfile) {
+        keyHandler.emitLegacyKeysym = true /*profile.fLegacyKeySym*/
+        setupOrientation()
+    }
+
+    private fun retryConnection(seamless: Boolean = false, nextAutoReconnectDelay: Int = 0) {
         //We simply create a new activity to force creation of new ViewModel
         //which effectively restarts the connection.
         if (!isFinishing) {
@@ -184,7 +216,7 @@ class VncActivity : AppCompatActivity() {
                 SavedFrameState(frameX = it.frameX, frameY = it.frameY, zoom1 = it.zoomScale1, zoom2 = it.zoomScale2)
             }
 
-            startVncActivity(this, viewModel.profile, savedFrameState)
+            startVncActivity(this, viewModel.profile, savedFrameState, nextAutoReconnectDelay)
 
             if (seamless) {
                 @Suppress("DEPRECATION")
@@ -212,8 +244,8 @@ class VncActivity : AppCompatActivity() {
         LoginFragment().show(supportFragmentManager, "LoginDialog")
     }
 
-    private fun showHostKeyDialog() {
-        HostKeyFragment().show(supportFragmentManager, "HostKeyFragment")
+    private fun showConfirmationDialog() {
+        ConfirmationDialog().show(supportFragmentManager, "ConfirmationDialog")
     }
 
     fun showKeyboard() {
@@ -237,8 +269,10 @@ class VncActivity : AppCompatActivity() {
 
         if (isConnected) {
             ViewerHelp().onConnected(this)
-            keyHandler.enableMacOSCompatibility = viewModel.client.isConnectedToMacOS
+            keyHandler.enableMacOSCompatibility = viewModel.client.isConnectedToMacOS()
             virtualKeys.onConnected(isInPiPMode())
+            binding.frameView.setInputHandlers(keyHandler, touchHandler)
+            autoReconnectDelay = 1
         }
 
         if (isConnected && !restoredFromBundle) {
@@ -276,7 +310,7 @@ class VncActivity : AppCompatActivity() {
 
         // If disconnected when coming back from background, try to reconnect immediately
         if (wasConnectedWhenStopped && (SystemClock.uptimeMillis() - onStartTime) in 0..2000) {
-            Log.d(javaClass.simpleName, "Disconnected while in background, reconnecting ...")
+            Log.i(TAG, "Disconnected while in background, reconnecting ...")
             retryConnection(true)
             return
         }
@@ -287,13 +321,20 @@ class VncActivity : AppCompatActivity() {
         autoReconnecting = true
         lifecycleScope.launch {
             lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                val timeout = 5 //seconds, must be >1
-                repeat(timeout) {
-                    binding.autoReconnectProgress.setProgressCompat((100 * it) / (timeout - 1), true)
+                val reconnectDelay = autoReconnectDelay.coerceIn(0, 5) //seconds
+
+                repeat(reconnectDelay) {
+                    val progress = if (reconnectDelay <= 1) 100 else (100 * it) / (reconnectDelay - 1)
+                    binding.autoReconnectProgress.setProgressCompat(progress, true)
                     delay(1000)
-                    if (it >= (timeout - 1))
-                        retryConnection()
                 }
+
+                // Automatic reconnect attempts happen every 5 seconds.
+                // But if session had reached Connected state, first attempt happens
+                // after 1 second, second attempt after 3 seconds, and then every 5 seconds.
+                val nextReconnectDelay = if (reconnectDelay < 3) 3 else 5
+                Log.d(TAG, "AutoReconnect: Retrying after $reconnectDelay seconds")
+                retryConnection(nextAutoReconnectDelay = nextReconnectDelay)
             }
         }
     }
@@ -303,7 +344,6 @@ class VncActivity : AppCompatActivity() {
      * Layout handling.
      ************************************************************************************/
     private fun setupLayout() {
-        setupOrientation()
         layoutManager.initialize()
 
         if (Build.VERSION.SDK_INT >= 28 && viewModel.pref.viewer.drawBehindCutout) {
@@ -346,12 +386,22 @@ class VncActivity : AppCompatActivity() {
     }
 
     @RequiresApi(26)
-    override fun onPictureInPictureModeChanged(inPiP: Boolean, newConfig: Configuration) {
-        super.onPictureInPictureModeChanged(inPiP, newConfig)
-        if (inPiP) {
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        virtualKeys.onPiPModeChanged(isInPictureInPictureMode)
+        if (isInPictureInPictureMode) {
             toolbar.close()
             viewModel.resetZoom()
-            virtualKeys.hide()
+        } else {
+            // If user taps the Close button on PiP window, Android will stop the Activity
+            // but won't destroy it. This is not a problem for singleTask activities since those
+            // are still shown in Recents screen. But AVNC doesn't use singleTask. So VncActivity
+            // in PiP mode gets detached into a separate task, which for some reason isn't shown
+            // in Recents screen. Hence the activity is effectively leaked.
+            if (lifecycle.currentState == Lifecycle.State.CREATED) {
+                Log.i(TAG, "Finishing activity on PiP Close button click")
+                finish()
+            }
         }
     }
 
@@ -375,7 +425,7 @@ class VncActivity : AppCompatActivity() {
             try {
                 enterPictureInPictureMode(param)
             } catch (e: IllegalStateException) {
-                Log.w(javaClass.simpleName, "Cannot enter PiP mode", e)
+                Log.e(TAG, "Cannot enter PiP mode", e)
             }
         }
     }

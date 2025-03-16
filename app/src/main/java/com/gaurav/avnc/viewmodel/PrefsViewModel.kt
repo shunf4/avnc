@@ -55,11 +55,12 @@ class PrefsViewModel(app: Application) : BaseViewModel(app) {
     /**
      * Exports data to given [uri].
      */
-    fun export(uri: Uri) {
+    fun export(uri: Uri, exportSecrets: Boolean) {
         launchIO {
             runCatching {
                 // Serialize
                 val profiles = serverProfileDao.getList()
+                if (!exportSecrets) scrubSecrets(profiles)
                 val data = Container(profiles = profiles)
                 val json = serializer.encodeToString(data)
 
@@ -96,18 +97,27 @@ class PrefsViewModel(app: Application) : BaseViewModel(app) {
                 if (deleteCurrentServers) {
                     db.withTransaction {
                         serverProfileDao.deleteAll()
-                        serverProfileDao.insert(data.profiles)
+                        serverProfileDao.save(data.profiles)
                     }
                 } else {
                     //Reset IDs so that they don't conflict with saved profiles
                     data.profiles.forEach { it.ID = 0 }
-                    serverProfileDao.insert(data.profiles)
+                    serverProfileDao.save(data.profiles)
                 }
 
             }.let {
                 importExportError.postValue(it.exceptionOrNull()?.message)
                 importFinishedEvent.fireAsync(it.isSuccess)
             }
+        }
+    }
+
+    private fun scrubSecrets(profiles: List<ServerProfile>) {
+        profiles.forEach {
+            it.password = ""
+            it.sshPassword = ""
+            it.sshPrivateKey = ""
+            it.sshPrivateKeyPassword = ""
         }
     }
 }

@@ -30,9 +30,7 @@
         <com.google.android.material.appbar.AppBarLayout
             android:id="@+id/appbar"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toTopOf="parent">
+            android:layout_height="wrap_content">
 
             <com.google.android.material.appbar.MaterialToolbar
                 android:id="@+id/toolbar"
@@ -41,27 +39,23 @@
                 app:navigationContentDescription="@string/desc_back_btn"
                 app:navigationIcon="@drawable/ic_arrow_back">
 
-                <Button
-                    android:id="@+id/save_btn"
-                    style="@style/Widget.MaterialComponents.Button.TextButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="end"
-                    android:text="@string/title_save" />
             </com.google.android.material.appbar.MaterialToolbar>
         </com.google.android.material.appbar.AppBarLayout>
 
         <ScrollView
+            android:id="@+id/scroll_view"
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_weight="1">
+            android:layout_weight="1"
+            android:fadeScrollbars="false">
 
             <androidx.constraintlayout.widget.ConstraintLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:animateLayoutChanges="true"
-                android:padding="@dimen/padding_normal"
-                android:paddingBottom="30dp">
+                android:paddingHorizontal="@dimen/padding_normal"
+                android:paddingTop="@dimen/padding_normal"
+                android:paddingBottom="60dp">
 
 
                 <!--~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
@@ -99,15 +93,14 @@
                     android:id="@+id/port"
                     style="@style/FormField.EditText"
                     android:layout_marginStart="0dp"
+                    android:ems="3"
                     android:hint="@string/hint_port"
                     android:importantForAutofill="no"
                     android:inputType="number"
                     android:text='@={"" +  viewModel.profile.port}'
                     app:layout_constraintBottom_toBottomOf="@id/host"
                     app:layout_constraintEnd_toEndOf="parent"
-                    app:layout_constraintStart_toEndOf="@id/host"
-                    app:layout_constraintTop_toTopOf="@id/host"
-                    app:layout_constraintWidth_percent=".2" />
+                    app:layout_constraintTop_toTopOf="@id/host" />
 
                 <!--Repeater-->
                 <CheckBox
@@ -188,7 +181,7 @@
 
 
                 <!--Key Compatibility mode-->
-                <CheckBox
+                <!--<CheckBox
                     android:id="@+id/key_compat_mode"
                     style="@style/FormField.CheckBox"
                     android:checked="@={viewModel.profile.fLegacyKeySym}"
@@ -206,6 +199,17 @@
                     app:layout_constraintEnd_toEndOf="parent"
                     app:layout_constraintTop_toTopOf="@id/key_compat_mode"
                     app:tint="?colorControlNormal" />
+                -->
+                <TextView
+                    android:id="@+id/key_compat_mode_notice"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="48dp"
+                    android:paddingVertical="@dimen/padding_small"
+                    android:text="'Send legacy key events' is now always enabled."
+                    app:isVisible="@{!viewModel.profile.fLegacyKeySym}"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintTop_toBottomOf="@id/wol_mac" />
 
                 <!--Button-up delay-->
                 <CheckBox
@@ -215,7 +219,7 @@
                     android:text="@string/title_button_up_delay"
                     app:layout_constraintEnd_toEndOf="parent"
                     app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintTop_toBottomOf="@id/key_compat_mode" />
+                    app:layout_constraintTop_toBottomOf="@id/key_compat_mode_notice" />
 
                 <ImageButton
                     android:id="@+id/button_up_delay_help_btn"
@@ -419,15 +423,14 @@
                     <EditText
                         android:id="@+id/ssh_port"
                         style="@style/FormField.EditText"
+                        android:ems="3"
                         android:hint="@{@string/hint_ssh_port}"
                         android:importantForAutofill="no"
                         android:inputType="number"
                         android:text='@={"" + viewModel.profile.sshPort}'
                         app:layout_constraintBottom_toBottomOf="@id/ssh_host"
                         app:layout_constraintEnd_toEndOf="parent"
-                        app:layout_constraintStart_toEndOf="@id/ssh_host"
-                        app:layout_constraintTop_toTopOf="@id/ssh_host"
-                        app:layout_constraintWidth_percent=".2" />
+                        app:layout_constraintTop_toTopOf="@id/ssh_host" />
 
                     <!--Username-->
                     <EditText
@@ -499,5 +502,38 @@
                 </androidx.constraintlayout.widget.ConstraintLayout>
             </androidx.constraintlayout.widget.ConstraintLayout>
         </ScrollView>
+
+        <com.google.android.material.bottomappbar.BottomAppBar
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:contentInsetEnd="15dp"
+            app:contentInsetStart="15dp"
+            app:elevation="@dimen/editor_bottom_bar_elevation"
+            tools:ignore="BottomAppBar">
+
+            <Button
+                android:id="@+id/cancel_btn"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/title_cancel" />
+
+            <Button
+                android:id="@+id/try_btn"
+                style="@style/Widget.MaterialComponents.Button.TextButton.Dialog"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:text="@string/title_try"
+                app:icon="@drawable/ic_launch"
+                app:iconGravity="end" />
+
+            <Button
+                android:id="@+id/save_btn"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="end"
+                android:text="@string/title_save" />
+        </com.google.android.material.bottomappbar.BottomAppBar>
     </LinearLayout>
 </layout>

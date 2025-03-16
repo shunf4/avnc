@@ -52,7 +52,7 @@ import com.gaurav.avnc.viewmodel.VncViewModel.State.Companion.isConnected
  * User can align the toolbar to left or right edge.
  *
  */
-class Toolbar(private val activity: VncActivity, private val dispatcher: Dispatcher) {
+class Toolbar(private val activity: VncActivity) {
     private val viewModel = activity.viewModel
     private val binding = activity.binding.toolbar
     private val drawerLayout = activity.binding.drawerLayout
@@ -64,7 +64,6 @@ class Toolbar(private val activity: VncActivity, private val dispatcher: Dispatc
         binding.zoomOptions.setOnLongClickListener { resetZoomToDefault(); close(); true }
         binding.zoomResetBtn.setOnClickListener { resetZoomToDefault(); close() }
         binding.zoomResetBtn.setOnLongClickListener { resetZoom(); close(); true }
-        binding.zoomLockBtn.isChecked = viewModel.profile.fZoomLocked
         binding.zoomLockBtn.setOnCheckedChangeListener { _, checked -> toggleZoomLock(checked); close() }
         binding.zoomSaveBtn.setOnClickListener { saveZoom(); close() }
         binding.virtualKeysBtn.setOnClickListener { activity.virtualKeys.show(true); close() }
@@ -139,12 +138,17 @@ class Toolbar(private val activity: VncActivity, private val dispatcher: Dispatc
         )
 
         binding.gestureStyleGroup.let { group ->
-            group.check(styleButtonMap[viewModel.profile.gestureStyle] ?: -1)
+            viewModel.activeGestureStyle.observe(activity) {
+                // Retrieve gesture style from profile,
+                // because activeGestureStyle doesn't contain the 'auto' option
+                group.check(styleButtonMap[viewModel.profile.gestureStyle] ?: -1)
+            }
+
             group.setOnCheckedChangeListener { _, id ->
-                for ((k, v) in styleButtonMap)
-                    if (v == id) viewModel.profile.gestureStyle = k
-                viewModel.saveProfile()
-                dispatcher.onGestureStyleChanged()
+                if (viewModel.state.value.isConnected) { // Make sure profile is available
+                    val newStyle = styleButtonMap.entries.first { it.value == id }.key
+                    viewModel.setProfileGestureStyle(newStyle)
+                }
                 close()
             }
         }

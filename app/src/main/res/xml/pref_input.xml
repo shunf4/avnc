@@ -18,6 +18,7 @@
             app:defaultValue="touchscreen"
             app:entries="@array/gesture_style_entries"
             app:entryValues="@array/gesture_style_values"
+            app:helpMessage="@string/msg_gesture_style_help"
             app:key="gesture_style"
             app:title="@string/pref_gesture_style"
             app:useSimpleSummaryProvider="true"
@@ -47,6 +48,14 @@
             app:title="@string/pref_two_finger_tap"
             app:useSimpleSummaryProvider="true" />
 
+        <ListPreference
+            app:defaultValue="none"
+            app:entries="@array/tap3_action_entries"
+            app:entryValues="@array/tap3_action_values"
+            app:key="gesture_tap3"
+            app:title="@string/pref_three_finger_tap"
+            app:useSimpleSummaryProvider="true" />
+
         <com.gaurav.avnc.ui.prefs.ListPreferenceEx
             app:defaultValue="pan"
             app:entries="@array/swipe1_action_entries"
@@ -63,6 +72,14 @@
             app:title="@string/pref_swipe2"
             app:useSimpleSummaryProvider="true" />
 
+        <ListPreference
+            app:defaultValue="pan"
+            app:entries="@array/swipe3_action_entries"
+            app:entryValues="@array/swipe3_action_values"
+            app:key="gesture_swipe3"
+            app:title="@string/pref_swipe3"
+            app:useSimpleSummaryProvider="true" />
+
         <com.gaurav.avnc.ui.prefs.ListPreferenceEx
             app:defaultValue="remote-drag"
             app:entries="@array/double_tap_swipe_action_entries"
@@ -75,6 +92,7 @@
             app:defaultValue="none"
             app:entries="@array/long_press_swipe_action_entries"
             app:entryValues="@array/long_press_swipe_action_values"
+            app:helpMessage="@string/msg_drag_gesture_help"
             app:key="gesture_long_press_swipe"
             app:title="@string/pref_long_press_swipe"
             app:useSimpleSummaryProvider="true"

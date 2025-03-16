@@ -9,20 +9,31 @@
 package com.gaurav.avnc.ui.home
 
 import android.app.Dialog
+import android.content.res.Configuration
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
+import android.view.Menu
+import android.view.MenuInflater
+import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
+import android.widget.TextView
 import androidx.core.os.BundleCompat
+import androidx.core.view.MenuProvider
+import androidx.core.view.descendants
+import androidx.core.view.isVisible
 import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
 import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.AbstractSavedStateViewModelFactory
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.lifecycleScope
@@ -36,6 +47,7 @@ import com.gaurav.avnc.util.parseMacAddress
 import com.gaurav.avnc.viewmodel.EditorViewModel
 import com.gaurav.avnc.viewmodel.HomeViewModel
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.elevation.ElevationOverlayProvider
 import com.google.android.material.snackbar.Snackbar
 import com.trilead.ssh2.crypto.PEMDecoder
 import kotlinx.coroutines.Dispatchers
@@ -101,9 +113,9 @@ private fun getTitle(f: Fragment): Int {
 /**
  * If [preCondition] is `true`, validates that [target] is not empty.
  */
-private fun validateNotEmpty(target: EditText, preCondition: Boolean = true, msg: String = "Required"): Boolean {
+private fun validateNotEmpty(target: EditText, preCondition: Boolean = true): Boolean {
     if (preCondition && target.length() == 0) {
-        target.error = msg
+        target.error = target.context.getText(R.string.msg_required)
         return false
     }
     return true
@@ -166,13 +178,17 @@ class AdvancedProfileEditor : Fragment() {
         binding.viewModel = viewModel
 
         binding.toolbar.title = getString(getTitle(this))
+        binding.tryBtn.setOnClickListener { tryConnection() }
         binding.saveBtn.setOnClickListener { save() }
+        binding.cancelBtn.setOnClickListener { dismiss() }
         binding.toolbar.setNavigationOnClickListener { dismiss() }
         binding.keyImportBtn.setOnClickListener { keyFilePicker.launch(arrayOf("*/*")) }
 
-        setupHelpButton(binding.keyCompatModeHelpBtn, R.string.title_key_compat_mode, R.string.msg_key_compat_mode_help)
+        //setupHelpButton(binding.keyCompatModeHelpBtn, R.string.title_key_compat_mode, R.string.msg_key_compat_mode_help)
         setupHelpButton(binding.buttonUpDelayHelpBtn, R.string.title_button_up_delay, R.string.msg_button_up_delay_help)
         setupHelpButton(binding.wolHelpBtn, R.string.title_enable_wol, R.string.msg_wake_on_lan_help)
+        setupNightModeNavBarColor()
+        setupToolbarMenu()
 
         return binding.root
     }
@@ -183,12 +199,79 @@ class AdvancedProfileEditor : Fragment() {
         }
     }
 
+    /**
+     * When Dark theme is active, navigation bar background color should match
+     * with the background color of bottom app bar.
+     */
+    private fun setupNightModeNavBarColor() {
+        if ((resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) != Configuration.UI_MODE_NIGHT_YES)
+            return // Night mode is not active
+
+        @Suppress("DEPRECATION")
+        viewLifecycleOwner.lifecycle.addObserver(object : DefaultLifecycleObserver {
+            var originalNavBarColor: Int? = null
+
+            private fun getNewColor(): Int {
+                val elevation = resources.getDimension(R.dimen.editor_bottom_bar_elevation)
+                return ElevationOverlayProvider(requireContext())
+                        .compositeOverlayWithThemeSurfaceColorIfNeeded(elevation)
+            }
+
+            override fun onStart(owner: LifecycleOwner) {
+                requireActivity().window.let {
+                    originalNavBarColor = it.navigationBarColor
+                    it.navigationBarColor = getNewColor()
+                }
+            }
+
+            override fun onStop(owner: LifecycleOwner) {
+                originalNavBarColor?.let {
+                    requireActivity().window.navigationBarColor = it
+                    originalNavBarColor = null
+                }
+            }
+        })
+    }
+
+    private fun setupToolbarMenu() {
+        binding.toolbar.addMenuProvider(object : MenuProvider {
+            override fun onCreateMenu(menu: Menu, menuInflater: MenuInflater) {
+                menu.add(R.string.title_always_show_advanced_editor)
+                        .setCheckable(true)
+                        .setChecked(viewModel.pref.ui.preferAdvancedEditor)
+                        .setOnMenuItemClickListener {
+                            viewModel.pref.ui.apply {
+                                preferAdvancedEditor = !preferAdvancedEditor
+                                it.isChecked = preferAdvancedEditor
+                            }
+                            true
+                        }
+            }
+
+            override fun onMenuItemSelected(menuItem: MenuItem) = false
+        }, viewLifecycleOwner)
+    }
+
     private fun dismiss() = parentFragmentManager.popBackStack()
 
     private fun save() {
-        if (!validate()) return
+        if (!validate()) {
+            highlightFieldWithError()
+            return
+        }
         homeViewModel.saveProfile(viewModel.prepareProfileForSave())
         dismiss()
+    }
+
+    private fun tryConnection() {
+        if (!validate()) {
+            highlightFieldWithError()
+            return
+        }
+        // Clear the ID to make sure VncActivity doesn't make any changes
+        // to profile being edited here
+        val profile = viewModel.prepareProfileForSave().copy(ID = 0)
+        homeViewModel.startConnection(profile)
     }
 
     private fun validate(): Boolean {
@@ -211,9 +294,26 @@ class AdvancedProfileEditor : Fragment() {
         return result
     }
 
+    private fun highlightFieldWithError() {
+        binding.scrollView.descendants.find { it.isVisible && it is TextView && it.error != null }?.let {
+            // Try to focus the View, which would also reveal it.
+            // If View isn't focusable, manually reveal  it.
+            if (!it.requestFocus())
+                scrollToView(it)
+        }
+    }
+
+    private fun scrollToView(view: View) {
+        if (Build.VERSION.SDK_INT >= 29)
+            binding.scrollView.scrollToDescendant(view)
+        else
+            binding.scrollView.requestChildFocus(null, view) // Wierd but effective workaround
+    }
+
+
     private fun validateMACAddress(): Boolean {
         if (runCatching { parseMacAddress(binding.wolMac.text.toString()) }.isFailure) {
-            binding.wolMac.error = "Invalid MAC address"
+            binding.wolMac.error = getText(R.string.msg_invalid_mac_address)
             return false
         }
         return true
@@ -221,7 +321,7 @@ class AdvancedProfileEditor : Fragment() {
 
     private fun validatePrivateKey(): Boolean {
         if (binding.sshAuthTypeKey.isChecked && viewModel.hasSshPrivateKey.value != true) {
-            binding.keyImportBtn.error = "Required"
+            binding.keyImportBtn.error = getText(R.string.msg_required)
             return false
         }
         return true

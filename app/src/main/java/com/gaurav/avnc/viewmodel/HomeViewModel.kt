@@ -46,10 +46,10 @@ class HomeViewModel(app: Application) : BaseViewModel(app) {
     val editProfileEvent = LiveEvent<ServerProfile>()
 
     /**
-     * Fired when a new profile is saved to database.
+     * Fired when a profile is saved to database.
      * Can be used to highlight the new profile in UI.
      */
-    val profileInsertedEvent = LiveEvent<ServerProfile>()
+    val profileSavedEvent = LiveEvent<ServerProfile>()
 
     /**
      * Fired when a profile is deleted from database.
@@ -62,7 +62,7 @@ class HomeViewModel(app: Application) : BaseViewModel(app) {
      */
     fun startConnection(profile: ServerProfile) = newConnectionEvent.fire(profile)
 
-    fun maybeConnectOnAppStart() = launch {
+    fun maybeConnectOnAppStart() = launchMain {
         serverProfileDao.getConnectableOnAppStart().firstOrNull()?.let { startConnection(it) }
     }
 
@@ -122,23 +122,14 @@ class HomeViewModel(app: Application) : BaseViewModel(app) {
      * These operations are asynchronous.
      **************************************************************************/
 
-    fun insertProfile(profile: ServerProfile) = launch {
-        serverProfileDao.insert(profile)
-        profileInsertedEvent.fire(profile)
+    fun saveProfile(profile: ServerProfile) = launchMain {
+        serverProfileDao.save(profile)
+        profileSavedEvent.fire(profile)
     }
 
-    fun updateProfile(profile: ServerProfile) = launch {
-        serverProfileDao.update(profile)
-    }
-
-    fun deleteProfile(profile: ServerProfile) = launch {
+    fun deleteProfile(profile: ServerProfile) = launchMain {
         serverProfileDao.delete(profile)
         profileDeletedEvent.fire(profile)
-    }
-
-    fun saveProfile(profile: ServerProfile) {
-        if (profile.ID == 0L) insertProfile(profile)
-        else updateProfile(profile)
     }
 
     /**************************************************************************

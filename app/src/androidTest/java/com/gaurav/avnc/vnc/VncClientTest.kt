@@ -12,6 +12,7 @@ import com.gaurav.avnc.TestServer
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
+import java.security.cert.X509Certificate
 
 class VncClientTest {
 
@@ -20,6 +21,7 @@ class VncClientTest {
 
         override fun onPasswordRequired() = ""
         override fun onCredentialRequired() = UserCredential()
+        override fun onVerifyCertificate(certificate: X509Certificate) = false
         override fun onFramebufferUpdated() {}
         override fun onFramebufferSizeChanged(width: Int, height: Int) {}
         override fun onPointerMoved(x: Int, y: Int) {}
@@ -47,7 +49,7 @@ class VncClientTest {
     private fun connect() {
         server.start()
         client.connect(server.host, server.port)
-        client.processServerMessage(10000)
+        client.processServerMessage()
     }
 
 
@@ -57,14 +59,14 @@ class VncClientTest {
     fun serverName() {
         server = TestServer(sampleText)
         connect()
-        assertEquals(sampleText, client.desktopName)
+        assertEquals(sampleText, client.getDesktopName())
     }
 
     @Test
     fun serverNameWithAccent() {
         server = TestServer(sampleTextWithAccent)
         connect()
-        assertEquals(sampleTextWithAccent, client.desktopName)
+        assertEquals(sampleTextWithAccent, client.getDesktopName())
     }
 
     @Test

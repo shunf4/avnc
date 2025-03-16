@@ -88,10 +88,11 @@ static char *onGetPassword(rfbClient *client) {
 }
 
 static rfbCredential *onGetCredential(rfbClient *client, int credentialType) {
-    if (credentialType != rfbCredentialTypeUser) {
-        //Only user credentials (i.e. username & password) are currently supported
-        rfbClientErr("Unsupported credential type requested");
-        return nullptr;
+    if (credentialType == rfbCredentialTypeX509) {
+        // Return empty credentials here, server certificate will be verified later
+        auto credential = (rfbCredential *) malloc(sizeof(rfbCredential));
+        memset(credential, 0, sizeof(rfbCredential));
+        return credential;
     }
 
     auto obj = getManagedClient(client);
@@ -122,6 +123,19 @@ static rfbCredential *onGetCredential(rfbClient *client, int credentialType) {
     return credential;
 }
 
+static rfbBool onVerifyServerCertificate(rfbClient *client, const unsigned char *der, int der_len) {
+    auto obj = getManagedClient(client);
+    auto env = context.getEnv();
+    auto cls = context.managedCls;
+
+    jmethodID mid = env->GetMethodID(cls, "cbVerifyServerCertificate", "([B)Z");
+    jbyteArray bytes = env->NewByteArray(der_len);
+    env->SetByteArrayRegion(bytes, 0, der_len, reinterpret_cast<const jbyte *>(der));
+    auto result = env->CallBooleanMethod(obj, mid, bytes);
+    env->DeleteLocalRef(bytes);
+    return result ? TRUE : FALSE;
+}
+
 static void onBell(rfbClient *client) {
     auto obj = getManagedClient(client);
     auto env = context.getEnv();
@@ -132,6 +146,8 @@ static void onBell(rfbClient *client) {
 }
 
 static void onGotXCutText(rfbClient *client, const char *text, int len, bool is_utf8) {
+    if (!text || len <= 0) return;
+
     auto obj = getManagedClient(client);
     auto env = context.getEnv();
     auto cls = context.managedCls;
@@ -140,6 +156,7 @@ static void onGotXCutText(rfbClient *client, const char *text, int len, bool is_
     jbyteArray bytes = env->NewByteArray(len);
     env->SetByteArrayRegion(bytes, 0, len, reinterpret_cast<const jbyte *>(text));
     env->CallVoidMethod(obj, mid, bytes, is_utf8);
+    env->DeleteLocalRef(bytes);
 }
 
 static void onGotXCutTextLatin1(rfbClient *client, const char *text, int len) {
@@ -147,6 +164,8 @@ static void onGotXCutTextLatin1(rfbClient *client, const char *text, int len) {
 }
 
 static void onGotXCutTextUTF8(rfbClient *client, const char *text, int len) {
+    if (text && len > 0 && text[len - 1] == '\0')
+        --len; // LibVNCClient includes terminating NULL in length for UTF8
     onGotXCutText(client, text, len, true);
 }
 
@@ -243,6 +262,7 @@ static void onGotCursorShape(rfbClient *client, int xHot, int yHot, int width, i
 static void setCallbacks(rfbClient *client) {
     client->GetPassword = onGetPassword;
     client->GetCredential = onGetCredential;
+    client->VerifyServerCertificate = onVerifyServerCertificate;
     client->Bell = onBell;
     client->GotXCutText = onGotXCutTextLatin1;
     client->GotXCutTextUTF8 = onGotXCutTextUTF8;
@@ -264,11 +284,13 @@ Java_com_gaurav_avnc_vnc_VncClient_nativeClientCreate(JNIEnv *env, jobject thiz)
     if (client == nullptr)
         return 0;
 
-    if (!assignClientExtension(client))
+    auto ex = assignClientExtension(client);
+    if (!ex)
         return 0;
 
     setCallbacks(client);
     client->canHandleNewFBSize = TRUE;
+    client->interruptFd = ex->interruptReadFd;
 
     //Attach reference to managed object
     auto obj = env->NewGlobalRef(thiz);
@@ -345,6 +367,12 @@ Java_com_gaurav_avnc_vnc_VncClient_nativeIsServerMacOS(JNIEnv *env, jobject thiz
 
 extern "C"
 JNIEXPORT void JNICALL
+Java_com_gaurav_avnc_vnc_VncClient_nativeInterrupt(JNIEnv *env, jobject thiz, jlong client_ptr) {
+    setInterrupt((rfbClient *) client_ptr);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
 Java_com_gaurav_avnc_vnc_VncClient_nativeCleanup(JNIEnv *env, jobject thiz,
                                                  jlong client_ptr) {
     auto client = (rfbClient *) client_ptr;
@@ -364,17 +392,19 @@ Java_com_gaurav_avnc_vnc_VncClient_nativeCleanup(JNIEnv *env, jobject thiz,
 extern "C"
 JNIEXPORT jboolean JNICALL
 Java_com_gaurav_avnc_vnc_VncClient_nativeProcessServerMessage(JNIEnv *env, jobject thiz,
-                                                              jlong client_ptr,
-                                                              jint u_sec_timeout) {
+                                                              jlong client_ptr) {
     auto client = (rfbClient *) client_ptr;
 
-    auto waitResult = WaitForMessage(client, static_cast<unsigned int>(u_sec_timeout));
+    auto waitResult = WaitForMessageInterruptible(client, 1000000, client->interruptFd);
 
     if (waitResult == 0) // Timeout
         return JNI_TRUE;
 
     if (waitResult > 0 && HandleRFBServerMessage(client))
         return JNI_TRUE;
+
+    if (errno == EINTR)
+        rfbClientLog("Message processing interrupted");
 
     return JNI_FALSE;
 }

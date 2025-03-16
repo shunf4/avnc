@@ -1,9 +1,16 @@
 package com.gaurav.avnc.vnc
 
 import androidx.annotation.Keep
+import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
+import java.security.cert.CertificateFactory
+import java.security.cert.X509Certificate
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.read
+import kotlin.concurrent.write
 
 /**
  * This is a thin wrapper around native client.
@@ -40,6 +47,7 @@ class VncClient(private val observer: Observer) {
     interface Observer {
         fun onPasswordRequired(): String
         fun onCredentialRequired(): UserCredential
+        fun onVerifyCertificate(certificate: X509Certificate): Boolean
         fun onGotXCutText(text: String)
         fun onFramebufferUpdated()
         fun onFramebufferSizeChanged(width: Int, height: Int)
@@ -63,25 +71,17 @@ class VncClient(private val observer: Observer) {
     var connected = false
         private set
 
-    /**
-     * Name of remote desktop
-     */
-    val desktopName; get() = nativeGetDesktopName(nativePtr)
+    private var destroyed = false
 
     /**
-     * Whether connection is encrypted
+     * Lock protecting access to [connected] & [destroyed] state.
      */
-    val isEncrypted; get() = nativeIsEncrypted(nativePtr)
-
-    /**
-     * Whether connected to a MacOS server
-     */
-    val isConnectedToMacOS; get() = nativeIsServerMacOS(nativePtr)
+    private val stateLock = ReentrantReadWriteLock()
 
     /**
      * In 'View-only' mode input to remote server is disabled
      */
-    var viewOnlyMode = false; private set
+    private var viewOnlyMode = false
 
     /**
      * Latest pointer position. See [moveClientPointer].
@@ -117,35 +117,72 @@ class VncClient(private val observer: Observer) {
      * @param securityType RFB security type to use.
      */
     fun configure(viewOnly: Boolean, securityType: Int, useLocalCursor: Boolean, imageQuality: Int, useRawEncoding: Boolean) {
-        viewOnlyMode = viewOnly
-        nativeConfigure(nativePtr, securityType, useLocalCursor, imageQuality, useRawEncoding)
+        stateLock.read {
+            if (!connected && !destroyed) {
+                viewOnlyMode = viewOnly
+                nativeConfigure(nativePtr, securityType, useLocalCursor, imageQuality, useRawEncoding)
+            }
+        }
     }
 
     fun setupRepeater(serverId: Int) {
-        nativeSetDest(nativePtr, "ID", serverId)
+        stateLock.read {
+            if (!connected && !destroyed)
+                nativeSetDest(nativePtr, "ID", serverId)
+        }
     }
 
     /**
      * Initializes VNC connection.
      */
     fun connect(host: String, port: Int) {
-        connected = nativeInit(nativePtr, host, port)
-        if (!connected) throw IOException(nativeGetLastErrorStr())
+        stateLock.read {
+            check(!connected) { "Already connected" }
+            check(!destroyed) { "Client has been destroyed" }
+
+            if (!nativeInit(nativePtr, host, port))
+                throw IOException(nativeGetLastErrorStr())
+        }
+        stateLock.write {
+            if (!destroyed)
+                connected = true
+        }
     }
 
     /**
      * Waits for incoming server message, parses it and then invokes appropriate callbacks.
-     *
-     * @param uSecTimeout Timeout in microseconds.
      */
-    fun processServerMessage(uSecTimeout: Int = 1000000) {
-        if (!connected)
-            return
+    fun processServerMessage() {
+        stateLock.read {
+            if (connected && nativeProcessServerMessage(nativePtr))
+                return
+        }
 
-        if (!nativeProcessServerMessage(nativePtr, uSecTimeout)) {
+        // Either not connected or an error occurred when processing message
+        stateLock.write {
             connected = false
             throw IOException(nativeGetLastErrorStr())
         }
+    }
+
+    /**
+     * Name of remote desktop
+     */
+    fun getDesktopName(): String {
+        ifConnected {
+            return nativeGetDesktopName(nativePtr)
+        }
+        return ""
+    }
+
+    /**
+     * Whether connected to a MacOS server
+     */
+    fun isConnectedToMacOS(): Boolean {
+        ifConnected {
+            return nativeIsServerMacOS(nativePtr)
+        }
+        return false
     }
 
     /**
@@ -184,7 +221,7 @@ class VncClient(private val observer: Observer) {
      * @param x    Horizontal pointer coordinate
      * @param y    Vertical pointer coordinate
      */
-    fun moveClientPointer(x: Int, y: Int) {
+    fun moveClientPointer(x: Int, y: Int) = ifConnected {
         pointerX = x
         pointerY = y
         observer.onPointerMoved(x, y)
@@ -234,24 +271,48 @@ class VncClient(private val observer: Observer) {
      * Puts framebuffer contents in currently active OpenGL texture.
      * Must be called from an OpenGL ES context (i.e. from renderer thread).
      */
-    fun uploadFrameTexture() = nativeUploadFrameTexture(nativePtr)
+    fun uploadFrameTexture() = ifConnected {
+        nativeUploadFrameTexture(nativePtr)
+    }
 
     /**
      * Upload cursor shape into framebuffer texture.
      */
-    fun uploadCursor() = nativeUploadCursor(nativePtr, pointerX, pointerY)
+    fun uploadCursor() = ifConnected {
+        nativeUploadCursor(nativePtr, pointerX, pointerY)
+    }
+
+    /**
+     * Try to interrupt long-running operations (e.g. [connect]) executing in other threads.
+     * This can be used to quickly finish/abandon these operations during connection shutdown,
+     * instead of waiting for the usual socket timeouts to kick in.
+     * For now, once interrupt flag is set for a client, it will remain set.
+     *
+     * Because this can be invoked from Main thread, read-lock is only tried once to avoid ANRs.
+     */
+    fun interrupt() {
+        stateLock.tryRead {
+            if (!destroyed)
+                nativeInterrupt(nativePtr)
+        }
+    }
 
     /**
      * Release all resources allocated by the client.
      * DO NOT use this client after [cleanup].
      */
     fun cleanup() {
-        connected = false
-        nativeCleanup(nativePtr)
+        stateLock.write {
+            if (!destroyed) {
+                nativeCleanup(nativePtr)
+                connected = false
+                destroyed = true
+            }
+        }
     }
 
-    private inline fun ifConnected(block: () -> Unit) {
-        if (connected)
+    private inline fun ifConnected(block: () -> Unit) = stateLock.tryRead {
+        if (connected && !destroyed)
             block()
     }
 
@@ -260,11 +321,38 @@ class VncClient(private val observer: Observer) {
             block()
     }
 
+    /**
+     * Non-blocking variant of [ReentrantReadWriteLock.read].
+     *
+     * In normal situation, we will always be able to acquire read-lock immediately
+     * because write-lock is only used to update the state. Moreover, write-lock is
+     * only held for very small duration.
+     *
+     * But it is possible for the following situation:
+     * 1. Thread A is holding read-lock to do a long running network IO (e.g. [sendCutText])
+     * 2. Thread B want to acquire write-lock (most probably in [processServerMessage])
+     * 3. Thread C, which can be the Main thread, wants to acquire read-lock (e.g. [moveClientPointer])
+     *
+     * Thread C can't acquire read-lock until both A & B are done. This can lead to
+     * ANRs. [tryRead] can be used in such scenarios because if Thread B is waiting for
+     * write-lock that most likely means connection has been closed, and action of
+     * thread C will fail anyway.
+     */
+    private inline fun <T> ReentrantReadWriteLock.tryRead(block: () -> T) {
+        if (this.readLock().tryLock(0, TimeUnit.SECONDS)) {
+            try {
+                block()
+            } finally {
+                this.readLock().unlock()
+            }
+        }
+    }
+
     private external fun nativeClientCreate(): Long
     private external fun nativeConfigure(clientPtr: Long, securityType: Int, useLocalCursor: Boolean, imageQuality: Int, useRawEncoding: Boolean)
     private external fun nativeInit(clientPtr: Long, host: String, port: Int): Boolean
     private external fun nativeSetDest(clientPtr: Long, host: String, port: Int)
-    private external fun nativeProcessServerMessage(clientPtr: Long, uSecTimeout: Int): Boolean
+    private external fun nativeProcessServerMessage(clientPtr: Long): Boolean
     private external fun nativeSendKeyEvent(clientPtr: Long, keySym: Int, xtCode: Int, isDown: Boolean): Boolean
     private external fun nativeSendPointerEvent(clientPtr: Long, x: Int, y: Int, mask: Int): Boolean
     private external fun nativeSendCutText(clientPtr: Long, bytes: ByteArray, isUTF8: Boolean): Boolean
@@ -280,6 +368,7 @@ class VncClient(private val observer: Observer) {
     private external fun nativeUploadCursor(clientPtr: Long, px: Int, py: Int)
     private external fun nativeGetLastErrorStr(): String
     private external fun nativeIsServerMacOS(clientPtr: Long): Boolean
+    private external fun nativeInterrupt(clientPtr: Long)
     private external fun nativeCleanup(clientPtr: Long)
 
     @Keep
@@ -287,6 +376,14 @@ class VncClient(private val observer: Observer) {
 
     @Keep
     private fun cbGetCredential() = observer.onCredentialRequired()
+
+    @Keep
+    private fun cbVerifyServerCertificate(der: ByteArray): Boolean {
+        val cert = ByteArrayInputStream(der).use {
+            CertificateFactory.getInstance("X.509").generateCertificate(it)
+        }
+        return observer.onVerifyCertificate(cert as X509Certificate)
+    }
 
     @Keep
     private fun cbGotXCutText(bytes: ByteArray, isUTF8: Boolean) {

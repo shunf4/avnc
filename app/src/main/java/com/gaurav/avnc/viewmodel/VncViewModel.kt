@@ -20,19 +20,23 @@ import com.gaurav.avnc.ui.vnc.FrameScroller
 import com.gaurav.avnc.ui.vnc.FrameState
 import com.gaurav.avnc.ui.vnc.FrameView
 import com.gaurav.avnc.util.LiveRequest
-import com.gaurav.avnc.util.SingleShotFlag
 import com.gaurav.avnc.util.broadcastWoLPackets
 import com.gaurav.avnc.util.getClipboardText
+import com.gaurav.avnc.util.getUnknownCertificateMessage
+import com.gaurav.avnc.util.isCertificateTrusted
 import com.gaurav.avnc.util.setClipboardText
-import com.gaurav.avnc.viewmodel.service.HostKey
+import com.gaurav.avnc.util.trustCertificate
+import com.gaurav.avnc.viewmodel.VncViewModel.State.Companion.isConnected
 import com.gaurav.avnc.viewmodel.service.SshTunnel
 import com.gaurav.avnc.vnc.Messenger
 import com.gaurav.avnc.vnc.UserCredential
 import com.gaurav.avnc.vnc.VncClient
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import java.io.IOException
 import java.lang.ref.WeakReference
+import java.security.cert.X509Certificate
 import kotlin.concurrent.thread
 
 /**
@@ -72,7 +76,7 @@ import kotlin.concurrent.thread
  * via OpenGL ES. [frameState] is read from this thread to decide how/where frame
  * should be drawn.
  */
-class VncViewModel(val profile: ServerProfile, app: Application) : BaseViewModel(app), VncClient.Observer {
+class VncViewModel(app: Application) : BaseViewModel(app), VncClient.Observer {
 
     /**
      * Connection lifecycle:
@@ -100,6 +104,13 @@ class VncViewModel(val profile: ServerProfile, app: Application) : BaseViewModel
             val State?.isDisconnected get() = (this == Disconnected)
         }
     }
+
+    lateinit var profile: ServerProfile
+
+    /**
+     * Live version of [profile], allows easier access from UI layer
+     */
+    val profileLive = MutableLiveData<ServerProfile>()
 
     val client = VncClient(this)
 
@@ -159,6 +170,11 @@ class VncViewModel(val profile: ServerProfile, app: Application) : BaseViewModel
     val frameScroller = FrameScroller(this)
 
     /**
+     * Currently active gesture style
+     */
+    val activeGestureStyle = MutableLiveData<String>()
+
+    /**
      * Used for sending events to remote server.
      */
     val messenger = Messenger(client)
@@ -166,19 +182,16 @@ class VncViewModel(val profile: ServerProfile, app: Application) : BaseViewModel
     private val sshTunnel = SshTunnel(this)
 
     /**
-     * Used to confirm unknown hosts.
+     * Used to confirm something with user before continuing.
+     * This is mostly used to warn about unknown SSH host, x509 certificates etc.
+     * This request accepts two strings: First is used as title, second contains the message.
      */
-    val sshHostKeyVerifyRequest = LiveRequest<HostKey, Boolean>(false, viewModelScope)
-
-    /**
-     * Indicates if this view model has been cleared.
-     * Used by the receiver thread to control it's execution.
-     */
-    private val viewModelClearedFlag = SingleShotFlag()
+    val confirmationRequest = LiveRequest<Pair<String, String>, Boolean>(false, viewModelScope)
 
     override fun onCleared() {
         super.onCleared()
-        viewModelClearedFlag.set()
+        if (state.value != State.Disconnected)
+            client.interrupt()
     }
 
 
@@ -190,10 +203,13 @@ class VncViewModel(val profile: ServerProfile, app: Application) : BaseViewModel
      * Initialize VNC connection.
      * It can be called multiple times due to activity restarts.
      */
-    fun initConnection() {
+    fun initConnection(profile: ServerProfile) {
         if (state.value == State.Created) {
+            this.profile = profile
+            profileLive.value = profile
             state.value = State.Connecting
             frameState.setZoom(profile.zoom1, profile.zoom2)
+            applyProfileGestureStyle()
             launchConnection()
         }
     }
@@ -257,14 +273,11 @@ class VncViewModel(val profile: ServerProfile, app: Application) : BaseViewModel
     }
 
     private fun processMessages() {
-        while (viewModelClearedFlag.isNotSet)
+        while (viewModelScope.isActive)
             client.processServerMessage()
     }
 
     private fun cleanup() {
-        //Wait until activity is finished and viewmodel is cleaned up.
-        viewModelClearedFlag.await()
-
         messenger.cleanup()
         client.cleanup()
         sshTunnel.close()
@@ -275,8 +288,10 @@ class VncViewModel(val profile: ServerProfile, app: Application) : BaseViewModel
      */
     fun saveProfile() {
         if (profile.ID != 0L)
-            launch { serverProfileDao.update(profile) }
+            launchMain { serverProfileDao.update(profile) }
     }
+
+    suspend fun getProfileById(id: Long) = serverProfileDao.getByID(id)
 
     /**************************************************************************
      * Frame management
@@ -388,7 +403,7 @@ class VncViewModel(val profile: ServerProfile, app: Application) : BaseViewModel
      * In portrait mode, safe area is used instead of window to exclude the keyboard.
      */
     fun resizeRemoteDesktop() {
-        if (profile.resizeRemoteDesktop) frameState.let {
+        if (state.value.isConnected && profile.resizeRemoteDesktop) frameState.let {
             if (it.windowWidth > it.windowHeight)
                 messenger.setDesktopSize(it.windowWidth.toInt(), it.windowHeight.toInt())
             else
@@ -409,10 +424,23 @@ class VncViewModel(val profile: ServerProfile, app: Application) : BaseViewModel
     }
 
     /**
-     * Resolves applicable gesture style.
+     * Sets gesture style of profile to given value.
+     * Any change will be reflected in [activeGestureStyle].
      */
-    fun resolveGestureStyle(): String {
-        return if (profile.gestureStyle == "auto") pref.input.gesture.style else profile.gestureStyle
+    fun setProfileGestureStyle(newStyle: String) {
+        if (newStyle == profile.gestureStyle)
+            return
+
+        profile.gestureStyle = newStyle
+        saveProfile()
+        applyProfileGestureStyle()
+    }
+
+    private fun applyProfileGestureStyle() {
+        if (profile.gestureStyle == "auto")
+            activeGestureStyle.value = pref.input.gesture.style
+        else
+            activeGestureStyle.value = profile.gestureStyle
     }
 
     /**************************************************************************
@@ -425,6 +453,19 @@ class VncViewModel(val profile: ServerProfile, app: Application) : BaseViewModel
 
     override fun onCredentialRequired(): UserCredential {
         return getLoginInfo(LoginInfo.Type.VNC_CREDENTIAL).let { UserCredential(it.username, it.password) }
+    }
+
+    override fun onVerifyCertificate(certificate: X509Certificate): Boolean {
+        if (isCertificateTrusted(app, certificate))
+            return true
+
+        val title = "Unknown server certificate"
+        val message = getUnknownCertificateMessage(certificate)
+        if (!confirmationRequest.requestResponse(Pair(title, message)))
+            return false
+
+        trustCertificate(app, certificate)
+        return true
     }
 
     override fun onFramebufferUpdated() {

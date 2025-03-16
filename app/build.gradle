@@ -4,10 +4,15 @@ plugins {
     id 'org.jetbrains.kotlin.kapt' version '1.9.24'
     id 'org.jetbrains.kotlin.plugin.serialization' version '1.9.24'
     id "org.jetbrains.kotlin.plugin.parcelize" version "1.9.24"
+    id 'com.google.devtools.ksp' version '1.9.24-1.0.20'
 }
 
 if (file("sign.gradle").exists()) {
     apply from: 'sign.gradle'
+}
+
+ksp {
+    arg('room.schemaLocation', "$projectDir/roomSchema/".toString())
 }
 
 android {
@@ -131,7 +136,7 @@ dependencies {
     def roomVersion = "2.6.1"
     implementation "androidx.room:room-runtime:$roomVersion"
     implementation "androidx.room:room-ktx:$roomVersion"
-    kapt "androidx.room:room-compiler:$roomVersion"
+    ksp "androidx.room:room-compiler:$roomVersion"
 
     implementation "com.google.android.material:material:1.7.0"
     implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.5.0'

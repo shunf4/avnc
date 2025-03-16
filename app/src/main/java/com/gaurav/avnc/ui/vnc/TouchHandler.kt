@@ -94,7 +94,9 @@ class TouchHandler(private val frameView: FrameView, private val dispatcher: Dis
 
         when (e.actionMasked) {
             MotionEvent.ACTION_BUTTON_PRESS -> dispatcher.onMouseButtonDown(convertButton(e.actionButton), p)
+            MotionEvent.ACTION_DOWN -> dispatcher.onMouseButtonDown(convertButton2(e.buttonState), p)
             MotionEvent.ACTION_BUTTON_RELEASE -> dispatcher.onMouseButtonUp(convertButton(e.actionButton), p)
+            MotionEvent.ACTION_UP -> dispatcher.onMouseButtonUp(convertButton2(e.buttonState), p)
             MotionEvent.ACTION_MOVE -> dispatcher.onMouseMove(p)
 
             MotionEvent.ACTION_SCROLL -> {
@@ -116,6 +118,12 @@ class TouchHandler(private val frameView: FrameView, private val dispatcher: Dis
         MotionEvent.BUTTON_SECONDARY -> PointerButton.Right
         MotionEvent.BUTTON_TERTIARY -> PointerButton.Middle
         else -> PointerButton.None
+    }
+
+    private fun convertButton2(buttonState: Int) = when {
+        (buttonState and MotionEvent.BUTTON_TERTIARY != 0) -> PointerButton.Middle
+        (buttonState and MotionEvent.BUTTON_SECONDARY != 0) -> PointerButton.Right
+        else -> PointerButton.Left
     }
 
 

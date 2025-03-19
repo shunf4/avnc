@@ -9,6 +9,7 @@
 package com.gaurav.avnc.ui.vnc
 
 import android.graphics.PointF
+import com.gaurav.avnc.model.ServerProfile
 import com.gaurav.avnc.viewmodel.VncViewModel
 import com.gaurav.avnc.vnc.Messenger
 import com.gaurav.avnc.vnc.PointerButton
@@ -221,6 +222,8 @@ class Dispatcher(private val activity: VncActivity) {
     private fun startFrameFling(vx: Float, vy: Float) = viewModel.frameScroller.fling(vx, vy)
     private fun stopFrameFling() = viewModel.frameScroller.stop()
 
+
+
     /**
      * Most actions have the same implementation in both modes, only difference being
      * the point where event is sent. [transformPoint] is used for this mode-specific
@@ -230,7 +233,8 @@ class Dispatcher(private val activity: VncActivity) {
         //Used for remote scrolling
         private var accumulatedDx = 0F
         private var accumulatedDy = 0F
-        private val deltaPerScroll = 62F //For how much dx/dy, one scroll event will be sent
+        private val defaultDeltaPerScroll = 62F //For how much dx/dy, one scroll event will be sent
+        private val mouseScrollDeltaUnit = 10F
         private val yScrollDirection = (if (gesturePref.invertVerticalScrolling) -1 else 1)
         protected var lastPointerPostTransformPositionForScroll = PointF(0f, 0f)
         private var shouldPreventTransformThisTime = false
@@ -242,6 +246,20 @@ class Dispatcher(private val activity: VncActivity) {
         }
         abstract fun doMovePointer(p: PointF, dx: Float, dy: Float)
         abstract fun doRemoteDrag(button: PointerButton, p: PointF, dx: Float, dy: Float)
+
+        private fun computeProfileDeltaPerScroll(profile: ServerProfile): Float {
+            if (profile.deltaPerScroll == null) {
+                return defaultDeltaPerScroll
+            }
+            if (profile.deltaPerScroll == "") {
+                return defaultDeltaPerScroll
+            }
+            try {
+                return profile.deltaPerScroll.toFloat()
+            } catch (e: NumberFormatException) {
+                return defaultDeltaPerScroll
+            }
+        }
 
         open fun onGestureStart() = stopFrameFling()
         open fun onGestureStop(p: PointF) = doButtonRelease(p)
@@ -278,10 +296,28 @@ class Dispatcher(private val activity: VncActivity) {
             if (focusInput == null) {
                 shouldPreventTransformThisTime = true
             }
+
+            var deltaPerScroll = computeProfileDeltaPerScroll(viewModel.profile)
+            var effectiveYScrollDirection = overrideYScrollDirection ?: yScrollDirection
+
+            if (deltaPerScroll < 0) {
+                deltaPerScroll = -deltaPerScroll;
+                effectiveYScrollDirection = -effectiveYScrollDirection;
+            }
+
+            if (dx > 0 && accumulatedDx < 0 || dx < 0 && accumulatedDx > 0) {
+                accumulatedDx = 0F
+            }
             accumulatedDx += dx
-            accumulatedDy += overrideYScrollDirection?.let { dy * it } ?: (dy * yScrollDirection)
+            val effectiveDy = effectiveYScrollDirection * dy
+            if (effectiveDy > 0 && accumulatedDy < 0 || effectiveDy < 0 && accumulatedDy > 0) {
+                accumulatedDy = 0F
+            }
+            accumulatedDy += effectiveDy
 
             //Drain horizontal change
+
+
             while (abs(accumulatedDx) >= deltaPerScroll) {
                 if (accumulatedDx > 0) {
                     doClick(PointerButton.WheelLeft, focus)
@@ -310,7 +346,7 @@ class Dispatcher(private val activity: VncActivity) {
          * [vs] Movement of vertical scroll wheel
          */
         fun doRemoteScrollFromMouse(p: PointF, hs: Float, vs: Float) {
-            doRemoteScroll(p, hs * deltaPerScroll, vs * deltaPerScroll, null)
+            doRemoteScroll(p, hs * mouseScrollDeltaUnit, vs * mouseScrollDeltaUnit, null)
         }
     }
 

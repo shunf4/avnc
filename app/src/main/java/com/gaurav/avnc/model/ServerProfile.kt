@@ -177,6 +177,9 @@ data class ServerProfile(
         @ColumnInfo(defaultValue = "")
         var wolMAC: String = "",
 
+        @ColumnInfo(defaultValue = "62")
+        var deltaPerScroll: String = "62",
+
         /**
          * These values are used for SSH Tunnel
          */

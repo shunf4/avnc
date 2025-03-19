@@ -231,6 +231,20 @@
                     app:layout_constraintTop_toTopOf="@id/button_up_delay"
                     app:tint="?colorControlNormal" />
 
+                <EditText
+                    android:id="@+id/delta_per_scroll"
+
+                    style="@style/FormField.EditText"
+                    android:hint="delta_per_scroll"
+                    android:importantForAutofill="no"
+                    android:inputType="numberSigned"
+                    android:text="@={viewModel.profile.deltaPerScroll}"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintTop_toBottomOf="@id/button_up_delay"
+
+                    />
+
                 <!--Resize remote desktop-->
                 <CheckBox
                     android:id="@+id/resize_remote_desktop"
@@ -239,7 +253,7 @@
                     android:text="@string/title_resize_remote_desktop"
                     app:layout_constraintEnd_toEndOf="parent"
                     app:layout_constraintStart_toStartOf="parent"
-                    app:layout_constraintTop_toBottomOf="@id/button_up_delay" />
+                    app:layout_constraintTop_toBottomOf="@id/delta_per_scroll" />
 
                 <!--Image Quality-->
                 <TextView

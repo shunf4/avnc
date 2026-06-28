@@ -1,19 +1,20 @@
 /*
- * Copyright (c) 2020  Gaurav Ujjwal.
+ * Copyright (c) 2025  Gaurav Ujjwal.
  *
  * SPDX-License-Identifier:  GPL-3.0-or-later
  *
  * See COPYING.txt for more details.
  */
 
-package com.gaurav.avnc.ui.vnc
+package com.gaurav.avnc.ui.vnc.input
 
 import android.graphics.PointF
 import com.gaurav.avnc.model.ServerProfile
+import com.gaurav.avnc.ui.vnc.VncActivity
 import com.gaurav.avnc.viewmodel.VncViewModel
-import com.gaurav.avnc.vnc.Messenger
+import com.gaurav.avnc.session.Messenger
 import com.gaurav.avnc.vnc.PointerButton
-import kotlin.math.abs
+import com.gaurav.avnc.vnc.XKeySym
 
 /**
  * We allow users to customize the actions for different events.
@@ -53,15 +54,15 @@ import kotlin.math.abs
 class Dispatcher(private val activity: VncActivity) {
 
     private val viewModel = activity.viewModel
-    private val messenger = viewModel.messenger
     private val gesturePref = viewModel.pref.input.gesture
+    val accelerator = PointerAcceleration(viewModel)
 
 
     /**************************************************************************
      * Action configuration
      **************************************************************************/
-    private val directMode = DirectMode()
-    private val relativeMode = RelativeMode()
+    private val directMode = DirectPointerMode(viewModel)
+    private val relativeMode = RelativePointerMode(viewModel, accelerator)
     private var config = Config()
 
     private inner class Config {
@@ -102,6 +103,7 @@ class Dispatcher(private val activity: VncActivity) {
                 "double-click" -> { p -> defaultMode.doDoubleClick(PointerButton.Left, p) }
                 "middle-click" -> { p -> defaultMode.doClick(PointerButton.Middle, p) }
                 "right-click" -> { p -> defaultMode.doClick(PointerButton.Right, p) }
+                "remote-back-press" -> { _ -> doRemoteBackPress() }
                 "open-keyboard" -> { _ -> doOpenKeyboard() }
                 else -> { _ -> } //Nothing
             }
@@ -170,11 +172,19 @@ class Dispatcher(private val activity: VncActivity) {
         }
     }
 
+    init {
+        viewModel.activeGestureStyle.observe(activity) { config = Config() }
+    }
+
     /**************************************************************************
      * Event receivers
      **************************************************************************/
 
-    fun onGestureStart() = config.defaultMode.onGestureStart()
+    fun onGestureStart() {
+        config.defaultMode.onGestureStart()
+        stopFrameFling()
+    }
+
     fun onGestureStop(p: PointF) {
         config.defaultMode.onGestureStop(p)
         viewModel.frameState.onGestureStop()
@@ -201,16 +211,17 @@ class Dispatcher(private val activity: VncActivity) {
     fun onMouseScroll(p: PointF, hs: Float, vs: Float) = directMode.doRemoteScrollFromMouse(p, hs, vs)
     fun onMouseBack(p: PointF) = config.mouseBackAction(p)
 
+    fun onCapturedMouseButtonDown(button: PointerButton) = relativeMode.doButtonDown(button, PointF())
+    fun onCapturedMouseButtonUp(button: PointerButton) = relativeMode.doButtonUp(button, PointF())
+    fun onCapturedMouseMove(dx: Float, dy: Float) = relativeMode.doMovePointer(dx, dy, false)
+    fun onCapturedMouseScroll(hs: Float, vs: Float) = relativeMode.doRemoteScrollFromMouse(PointF(), hs, vs)
+
     fun onStylusTap(p: PointF) = directMode.doClick(PointerButton.Left, p)
     fun onStylusDoubleTap(p: PointF) = directMode.doDoubleClick(PointerButton.Left, p)
     fun onStylusLongPress(p: PointF) = directMode.doClick(PointerButton.Right, p)
     fun onStylusScroll(p: PointF) = directMode.doButtonDown(PointerButton.Left, p)
 
-    fun onXKey(keySym: Int, xtCode: Int, isDown: Boolean) = messenger.sendKey(keySym, xtCode, isDown)
-
-    fun onGestureStyleChanged() {
-        config = Config()
-    }
+    fun onXKey(keySym: Int, xtCode: Int, isDown: Boolean) = viewModel.messenger!!.sendKey(keySym, xtCode, isDown)
 
     /**************************************************************************
      * Available actions
@@ -222,225 +233,10 @@ class Dispatcher(private val activity: VncActivity) {
     private fun startFrameFling(vx: Float, vy: Float) = viewModel.frameScroller.fling(vx, vy)
     private fun stopFrameFling() = viewModel.frameScroller.stop()
 
-
-
-    /**
-     * Most actions have the same implementation in both modes, only difference being
-     * the point where event is sent. [transformPoint] is used for this mode-specific
-     * point selection.
-     */
-    private abstract inner class AbstractMode {
-        //Used for remote scrolling
-        private var accumulatedDx = 0F
-        private var accumulatedDy = 0F
-        private val defaultDeltaPerScroll = 62F //For how much dx/dy, one scroll event will be sent
-        private val mouseScrollDeltaUnit = 10F
-        private val yScrollDirection = (if (gesturePref.invertVerticalScrolling) -1 else 1)
-        protected var lastPointerPostTransformPositionForScroll = PointF(0f, 0f)
-        private var shouldPreventTransformThisTime = false
-
-        abstract fun transformPoint(p: PointF): PointF?
-        protected fun transformPoint1(p: PointF): PointF? {
-            if (shouldPreventTransformThisTime) { return p; }
-            return transformPoint(p);
-        }
-        abstract fun doMovePointer(p: PointF, dx: Float, dy: Float)
-        abstract fun doRemoteDrag(button: PointerButton, p: PointF, dx: Float, dy: Float)
-
-        private fun computeProfileDeltaPerScroll(profile: ServerProfile): Float {
-            if (profile.deltaPerScroll == null) {
-                return defaultDeltaPerScroll
-            }
-            if (profile.deltaPerScroll == "") {
-                return defaultDeltaPerScroll
-            }
-            try {
-                return profile.deltaPerScroll.toFloat()
-            } catch (e: NumberFormatException) {
-                return defaultDeltaPerScroll
-            }
-        }
-
-        open fun onGestureStart() = stopFrameFling()
-        open fun onGestureStop(p: PointF) = doButtonRelease(p)
-
-        fun doButtonDown(button: PointerButton, p: PointF) {
-            transformPoint1(p)?.let { lastPointerPostTransformPositionForScroll = it ; messenger.sendPointerButtonDown(button, it) }
-        }
-
-        fun doButtonUp(button: PointerButton, p: PointF) {
-            transformPoint1(p)?.let { lastPointerPostTransformPositionForScroll = it ; messenger.sendPointerButtonUp(button, it) }
-        }
-
-        fun doButtonRelease(p: PointF) {
-            transformPoint1(p)?.let { messenger.sendPointerButtonRelease(it) }
-        }
-
-        open fun doClick(button: PointerButton, p: PointF) {
-//            Log.i("doClick", "doClick " + button + " " + p)
-            doButtonDown(button, p)
-            // Some apps (mostly games) seems to ignore click event if button-up is received too early
-            if ((button == PointerButton.Left || button == PointerButton.Middle || button == PointerButton.Right)
-                && viewModel.profile.fButtonUpDelay)
-                messenger.insertButtonUpDelay()
-            doButtonUp(button, p)
-        }
-
-        fun doDoubleClick(button: PointerButton, p: PointF) {
-            doClick(button, p)
-            doClick(button, p)
-        }
-
-        fun doRemoteScroll(focusInput: PointF?, dx: Float, dy: Float, overrideYScrollDirection: Int?) {
-            val focus = focusInput ?: lastPointerPostTransformPositionForScroll
-            if (focusInput == null) {
-                shouldPreventTransformThisTime = true
-            }
-
-            var deltaPerScroll = computeProfileDeltaPerScroll(viewModel.profile)
-            var effectiveYScrollDirection = overrideYScrollDirection ?: yScrollDirection
-
-            if (deltaPerScroll < 0) {
-                deltaPerScroll = -deltaPerScroll;
-                effectiveYScrollDirection = -effectiveYScrollDirection;
-            }
-
-            if (dx > 0 && accumulatedDx < 0 || dx < 0 && accumulatedDx > 0) {
-                accumulatedDx = 0F
-            }
-            accumulatedDx += dx
-            val effectiveDy = effectiveYScrollDirection * dy
-            if (effectiveDy > 0 && accumulatedDy < 0 || effectiveDy < 0 && accumulatedDy > 0) {
-                accumulatedDy = 0F
-            }
-            accumulatedDy += effectiveDy
-
-            //Drain horizontal change
-
-
-            while (abs(accumulatedDx) >= deltaPerScroll) {
-                if (accumulatedDx > 0) {
-                    doClick(PointerButton.WheelLeft, focus)
-                    accumulatedDx -= deltaPerScroll
-                } else {
-                    doClick(PointerButton.WheelRight, focus)
-                    accumulatedDx += deltaPerScroll
-                }
-            }
-
-            //Drain vertical change
-            while (abs(accumulatedDy) >= deltaPerScroll) {
-                if (accumulatedDy > 0) {
-                    doClick(PointerButton.WheelUp, focus)
-                    accumulatedDy -= deltaPerScroll
-                } else {
-                    doClick(PointerButton.WheelDown, focus)
-                    accumulatedDy += deltaPerScroll
-                }
-            }
-            shouldPreventTransformThisTime = false
-        }
-
-        /**
-         * [hs] Movement of horizontal scroll wheel
-         * [vs] Movement of vertical scroll wheel
-         */
-        fun doRemoteScrollFromMouse(p: PointF, hs: Float, vs: Float) {
-            doRemoteScroll(p, hs * mouseScrollDeltaUnit, vs * mouseScrollDeltaUnit, null)
-        }
-    }
-
-    /**
-     * Actions happen at touch-point, which is simply transformed from
-     * viewport coordinates into corresponding position in framebuffer.
-     */
-    private inner class DirectMode : AbstractMode() {
-        override fun transformPoint(p: PointF) = viewModel.frameState.toFb(p)
-        override fun doMovePointer(p: PointF, dx: Float, dy: Float) = doButtonDown(PointerButton.None, p)
-        override fun doRemoteDrag(button: PointerButton, p: PointF, dx: Float, dy: Float) = doButtonDown(button, p)
-        override fun doClick(button: PointerButton, p: PointF) {
-            if (transformPoint(p) != null)
-                super.doClick(button, p)
-            else if (button == PointerButton.Left)
-                coerceToFbEdge(p)?.let { doMovePointer(it, 0f, 0f) }
-        }
-
-        // When user taps outside the frame, move the pointer to edge of the frame
-        // It allows opening of taskbar/panels when they are set to auto-hide.
-        // It can also be used for previewing taskbar items.
-        private fun coerceToFbEdge(p: PointF): PointF? {
-            val fs = viewModel.frameState
-            if (fs.fbWidth < 1 || fs.fbHeight < 1)
-                return null
-
-            return fs.toVP(
-                    fs.toFbUnchecked(p).apply {
-                        x = x.coerceIn(0f, fs.fbWidth - 1)
-                        y = y.coerceIn(0f, fs.fbHeight - 1)
-                    }
-            )
-        }
-    }
-
-    /**
-     * Actions happen at [pointerPosition], which is updated by [doMovePointer].
-     */
-    private inner class RelativeMode : AbstractMode() {
-        private val pointerPosition = PointF(0f, 0f)
-
-        override fun onGestureStart() {
-            super.onGestureStart()
-            //Initialize with the latest pointer position
-            pointerPosition.apply {
-                x = viewModel.client.pointerX.toFloat()
-                y = viewModel.client.pointerY.toFloat()
-            }
-            viewModel.client.ignorePointerMovesByServer = true
-        }
-
-        override fun onGestureStop(p: PointF) {
-            super.onGestureStop(p)
-            viewModel.client.ignorePointerMovesByServer = false
-        }
-
-        override fun transformPoint(p: PointF) = pointerPosition
-
-        override fun doMovePointer(p: PointF, dx: Float, dy: Float) {
-            val xLimit = viewModel.frameState.fbWidth - 1
-            val yLimit = viewModel.frameState.fbHeight - 1
-            if (xLimit < 0 || yLimit < 0)
-                return
-
-            pointerPosition.apply {
-                offset(dx, dy)
-                x = x.coerceIn(0f, xLimit)
-                y = y.coerceIn(0f, yLimit)
-            }
-            doButtonDown(PointerButton.None, pointerPosition)
-
-            //Try to keep the pointer centered on screen
-            val vp = viewModel.frameState.toVP(pointerPosition)
-            var panDiffX = 0f
-            var panDiffY = 0f
-            if (vp.x < viewModel.frameState.safeArea.left + 45) {
-                panDiffX = viewModel.frameState.safeArea.left + 45 - vp.x
-            } else if (vp.x > viewModel.frameState.safeArea.right - 45) {
-                panDiffX = viewModel.frameState.safeArea.right - 45 - vp.x
-            }
-
-            if (vp.y < viewModel.frameState.safeArea.top + 45) {
-                panDiffY = viewModel.frameState.safeArea.top + 45 - vp.y
-            } else if (vp.y > viewModel.frameState.safeArea.bottom - 45) {
-                panDiffY = viewModel.frameState.safeArea.bottom - 45 - vp.y
-            }
-            if (panDiffX != 0f || panDiffY != 0f) {
-                viewModel.panFrame(panDiffX, panDiffY)
-            }
-        }
-
-        override fun doRemoteDrag(button: PointerButton, p: PointF, dx: Float, dy: Float) {
-            doButtonDown(button, p)
-            doMovePointer(p, dx, dy)
-        }
+    private fun doRemoteBackPress() {
+        // RFB doesn't support pressing Back mouse button
+        // So we press the Back key on keyboard
+        onXKey(XKeySym.XF86XK_Back, 0, true)
+        onXKey(XKeySym.XF86XK_Back, 0, false)
     }
 }

@@ -8,9 +8,15 @@
 
 package com.gaurav.avnc.ui.vnc.gl
 
+import android.opengl.GLES20.GL_BLEND
 import android.opengl.GLES20.GL_COLOR_BUFFER_BIT
+import android.opengl.GLES20.GL_ONE_MINUS_SRC_ALPHA
+import android.opengl.GLES20.GL_SRC_ALPHA
+import android.opengl.GLES20.glBlendFunc
 import android.opengl.GLES20.glClear
 import android.opengl.GLES20.glClearColor
+import android.opengl.GLES20.glDisable
+import android.opengl.GLES20.glEnable
 import android.opengl.GLES20.glViewport
 import android.opengl.GLSurfaceView
 import android.opengl.Matrix
@@ -24,15 +30,17 @@ import javax.microedition.khronos.opengles.GL10
 class Renderer(val viewModel: VncViewModel) : GLSurfaceView.Renderer {
 
     private val projectionMatrix = FloatArray(16)
-    private val hideCursor = viewModel.pref.input.hideRemoteCursor
-    private lateinit var program: FrameProgram
+    private val drawCursor = !viewModel.pref.input.hideRemoteCursor
+    private lateinit var program: Program
     private lateinit var frame: Frame
+    private lateinit var cursor: Cursor
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         glClearColor(0f, 0f, 0f, 1f)
 
         frame = Frame()
-        program = FrameProgram()
+        cursor = Cursor()
+        program = Program()
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
@@ -73,8 +81,10 @@ class Renderer(val viewModel: VncViewModel) : GLSurfaceView.Renderer {
      */
     override fun onDrawFrame(gl: GL10?) {
         glClear(GL_COLOR_BUFFER_BIT)
+        glDisable(GL_BLEND)
 
-        if (!viewModel.client.connected)
+        val client = viewModel.client ?: return
+        if (!client.connected || client.frameBufferUpdatesPaused.get())
             return
 
         val state = viewModel.frameState.getSnapshot()
@@ -89,13 +99,24 @@ class Renderer(val viewModel: VncViewModel) : GLSurfaceView.Renderer {
         program.useProgram()
         program.setUniforms(projectionMatrix)
 
-        viewModel.client.uploadFrameTexture()
-        if (!hideCursor) viewModel.client.uploadCursor()
-
         frame.updateFbSize(state.fbWidth, state.fbHeight)
         frame.bind(program)
+        client.uploadFrameTexture()
+        frame.draw()
 
         program.validate()
-        frame.draw()
+
+        if (drawCursor) {
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+            val ci = client.cursorInfo
+
+            cursor.update(client.pointerX.toFloat(), client.pointerY.toFloat(), ci, frame)
+            cursor.bind(program)
+            client.uploadCursorTexture()
+            cursor.draw()
+
+            glDisable(GL_BLEND)
+        }
     }
 }

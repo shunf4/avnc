@@ -1,5 +1,6 @@
 
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.13)
+
 
 project(NativeVNC C CXX ASM)
 
@@ -25,6 +26,9 @@ if (CMAKE_ANDROID_ARCH STREQUAL "arm64")
 elseif (CMAKE_ANDROID_ARCH STREQUAL "arm")
     set(CMAKE_ASM_FLAGS "${CMAKE_ASM_FLAGS} --target=arm-linux-androideabi${ANDROID_NATIVE_API_LEVEL}")
 endif ()
+
+# Clear build id in release builds to allow reproducible builds on F-Droid
+add_link_options("LINKER:$<$<NOT:$<CONFIG:Debug>>:--build-id=none>")
 
 
 ###############################################################################
@@ -58,7 +62,7 @@ set(WOLFSSL_CRL yes)
 set(WOLFSSL_DES3 yes)
 add_definitions(-DOPENSSL_ALL -DOPENSSL_EXTRA -DHAVE_CRL -DHAVE_EX_DATA
         -DHAVE_ANON -DWOLFSSL_AES_DIRECT -DHAVE_AES_ECB -DWOLFSSL_DES_ECB
-        -DWC_NO_HARDEN)
+        -DWC_NO_HARDEN -DWOLFSSL_NO_OPTIONS_H)
 
 add_subdirectory(${AVNC_LIBSSL_SRC_DIR} ${AVNC_LIBSSL_BUILD_DIR})
 

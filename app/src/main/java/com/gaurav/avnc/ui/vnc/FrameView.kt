@@ -12,7 +12,6 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.opengl.GLSurfaceView
 import android.os.Build
-import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -20,6 +19,7 @@ import android.view.PointerIcon
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import com.gaurav.avnc.ui.vnc.gl.Renderer
+import com.gaurav.avnc.ui.vnc.input.InputHandler
 import com.gaurav.avnc.viewmodel.VncViewModel
 import com.gaurav.avnc.vnc.VncClient
 
@@ -47,36 +47,22 @@ import com.gaurav.avnc.vnc.VncClient
  */
 class FrameView(context: Context?, attrs: AttributeSet? = null) : GLSurfaceView(context, attrs) {
 
-    private lateinit var touchHandler: TouchHandler
-    private lateinit var keyHandler: KeyHandler
+    private lateinit var inputHandler: InputHandler
 
     /**
      * Input connection used for intercepting key events
      */
     inner class InputConnection : BaseInputConnection(this, false) {
-
-        /**
-         * 'Ç' & 'ç' requires special handling. Android's keymap generates extra ALT key press for these characters,
-         * which results in servers not handling them correctly. So instead of letting [BaseInputConnection] generate
-         * [KeyEvent]s, and then call [sendKeyEvent], a [KeyEvent.ACTION_MULTIPLE] is directly synthesized here.
-         */
-        override fun commitText(text: CharSequence, newCursorPosition: Int): Boolean {
-            if (text.contains('ç', true))
-                return sendKeyEvent(KeyEvent(SystemClock.uptimeMillis(), text.toString(), 0, 0))
-
-            return super.commitText(text, newCursorPosition)
-        }
-
         override fun sendKeyEvent(event: KeyEvent): Boolean {
-            return keyHandler.onKeyEvent(event) || super.sendKeyEvent(event)
+            return inputHandler.onKeyEvent(event) || super.sendKeyEvent(event)
         }
     }
 
     /**
      * Should be called from [VncActivity.onCreate].
      */
-    fun initialize(activity: VncActivity) {
-        val viewModel = activity.viewModel
+    fun initialize(viewModel: VncViewModel, inputHandler: InputHandler) {
+        this.inputHandler = inputHandler
 
         setEGLContextClientVersion(2)
         setRenderer(Renderer(viewModel))
@@ -85,11 +71,6 @@ class FrameView(context: Context?, attrs: AttributeSet? = null) : GLSurfaceView(
         // Hide local cursor if requested and supported
         if (Build.VERSION.SDK_INT >= 24 && viewModel.pref.input.hideLocalCursor)
             pointerIcon = PointerIcon.getSystemIcon(context, PointerIcon.TYPE_NULL)
-    }
-
-    fun setInputHandlers(keyHandler: KeyHandler, touchHandler: TouchHandler) {
-        this.keyHandler = keyHandler
-        this.touchHandler = touchHandler
     }
 
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
@@ -105,14 +86,18 @@ class FrameView(context: Context?, attrs: AttributeSet? = null) : GLSurfaceView(
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        return touchHandler.onTouchEvent(event)
+        return inputHandler.onTouchEvent(event)
     }
 
     override fun onGenericMotionEvent(event: MotionEvent): Boolean {
-        return touchHandler.onGenericMotionEvent(event)
+        return inputHandler.onGenericMotionEvent(event)
     }
 
     override fun onHoverEvent(event: MotionEvent): Boolean {
-        return touchHandler.onHoverEvent(event)
+        return inputHandler.onHoverEvent(event)
+    }
+
+    override fun onCapturedPointerEvent(event: MotionEvent): Boolean {
+        return inputHandler.onCapturedPointerEvent(event)
     }
 }

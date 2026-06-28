@@ -31,12 +31,13 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
 import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.viewModels
-import androidx.lifecycle.AbstractSavedStateViewModelFactory
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.viewmodel.CreationExtras
 import com.gaurav.avnc.R
 import com.gaurav.avnc.databinding.FragmentProfileEditorAdvancedBinding
 import com.gaurav.avnc.databinding.FragmentProfileEditorBinding
@@ -46,10 +47,10 @@ import com.gaurav.avnc.util.OpenableDocument
 import com.gaurav.avnc.util.parseMacAddress
 import com.gaurav.avnc.viewmodel.EditorViewModel
 import com.gaurav.avnc.viewmodel.HomeViewModel
+import com.gaurav.avnc.viewmodel.service.PemKey
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.elevation.ElevationOverlayProvider
 import com.google.android.material.snackbar.Snackbar
-import com.trilead.ssh2.crypto.PEMDecoder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -280,8 +281,11 @@ class AdvancedProfileEditor : Fragment() {
         if (binding.useRepeater.isChecked)
             result = result and validateNotEmpty(binding.idOnRepeater)
 
-        if (binding.wol.isChecked)
-            result = result and (validateNotEmpty(binding.wolMac) && validateMACAddress())
+        if (binding.wol.isChecked) {
+            result = result and
+                    (validateNotEmpty(binding.wolMac) && validateWolMACAddress()) and
+                    validateNotEmpty(binding.wolPort)
+        }
 
         if (binding.useSshTunnel.isChecked) {
             result = result and
@@ -311,12 +315,14 @@ class AdvancedProfileEditor : Fragment() {
     }
 
 
-    private fun validateMACAddress(): Boolean {
-        if (runCatching { parseMacAddress(binding.wolMac.text.toString()) }.isFailure) {
+    private fun validateWolMACAddress(): Boolean {
+        runCatching {
+            parseMacAddress(binding.wolMac.text.toString())
+        }.onFailure {
             binding.wolMac.error = getText(R.string.msg_invalid_mac_address)
-            return false
+        }.let {
+            return it.isSuccess
         }
-        return true
     }
 
     private fun validatePrivateKey(): Boolean {
@@ -341,7 +347,8 @@ class AdvancedProfileEditor : Fragment() {
                     check(it.length < 2 * 1024 * 1024) { "File is too big [${it.length}]" }
                     key = it.createInputStream().use { s -> s.reader().use { r -> r.readText() } }
                 }
-                PEMDecoder.parsePEM(key.toCharArray()) //Try to parse key
+
+                PemKey(key) //Try to parse key
             }
 
             withContext(Dispatchers.Main) {
@@ -358,9 +365,10 @@ class AdvancedProfileEditor : Fragment() {
         }
     }
 
-    private class EditorViewModelFactory(private val fragment: Fragment) : AbstractSavedStateViewModelFactory(fragment, null) {
-        override fun <T : ViewModel> create(key: String, modelClass: Class<T>, handle: SavedStateHandle): T {
+    private class EditorViewModelFactory(private val fragment: Fragment) : ViewModelProvider.Factory {
+        override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
             val app = fragment.requireActivity().application
+            val handle = extras.createSavedStateHandle()
             val profile = getProfileArg(fragment)
             return modelClass.cast(EditorViewModel(app, handle, profile))!!
         }

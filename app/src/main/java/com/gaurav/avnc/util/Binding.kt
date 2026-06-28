@@ -14,6 +14,7 @@ import android.view.View
 import android.widget.AdapterView
 import android.widget.SimpleAdapter
 import android.widget.Spinner
+import android.widget.TextView
 import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
 import androidx.databinding.BindingAdapter
@@ -29,6 +30,21 @@ fun visibilityAdapter(view: View, isVisible: Boolean) {
 @BindingAdapter("isInvisible")
 fun invisibilityAdapter(view: View, isInvisible: Boolean) {
     view.isInvisible = isInvisible
+}
+
+@BindingAdapter("backgroundAlpha")
+fun backgroundAlphaAdapter(view: View, alpha: Double) {
+    view.background?.alpha = (alpha * 255).toInt().coerceIn(0, 255)
+}
+
+/**
+ * Usually, the default android:enabled attribute is enough.
+ * But this adapter also reduces the alpha value of the view when disabled.
+ */
+@BindingAdapter("isEnabled")
+fun isEnabledAdapter(view: TextView, isEnabled: Boolean) {
+    view.isEnabled = isEnabled
+    view.alpha = if (isEnabled) 1f else .38f
 }
 
 /**************************************************************************************************

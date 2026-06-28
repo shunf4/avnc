@@ -11,6 +11,7 @@ package com.gaurav.avnc.model.db
 import android.content.Context
 import androidx.room.AutoMigration
 import androidx.room.Database
+import androidx.room.DeleteColumn
 import androidx.room.RenameColumn
 import androidx.room.Room
 import androidx.room.RoomDatabase
@@ -24,7 +25,7 @@ import com.gaurav.avnc.model.ServerProfile
     AutoMigration(from = 3, to = 4),                                          // in v2.2.2
     AutoMigration(from = 4, to = 5, spec = MainDb.MigrationSpec4to5::class),  // in v2.3.0
     AutoMigration(from = 5, to = 6),                                          // in v2.x.x
-    AutoMigration(from = 6, to = 10006),                                          // in v2.x.x
+    AutoMigration(from = 10006, to = 10007, spec = MainDb.MigrationSpec6to7::class),  // in v3.0.0                                          // in v2.x.x
 ])
 abstract class MainDb : RoomDatabase() {
     abstract val serverProfileDao: ServerProfileDao
@@ -33,7 +34,7 @@ abstract class MainDb : RoomDatabase() {
         /**
          * Current database version
          */
-        const val VERSION = 10006
+        const val VERSION = 10007
 
         private var instance: MainDb? = null
 
@@ -66,4 +67,9 @@ abstract class MainDb : RoomDatabase() {
     @RenameColumn(tableName = "profiles", fromColumnName = "compatFlags", toColumnName = "flags")
     @RenameColumn(tableName = "profiles", fromColumnName = "shortcutRank", toColumnName = "useCount")
     class MigrationSpec4to5 : AutoMigrationSpec
+
+    // Added in v3.0.0
+    @RenameColumn(tableName = "profiles", fromColumnName = "viewOnly", toColumnName = "viewMode")
+    @DeleteColumn(tableName = "profiles", columnName = "sshPrivateKeyPassword")
+    class MigrationSpec6to7 : AutoMigrationSpec
 }

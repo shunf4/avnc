@@ -23,13 +23,23 @@ struct JniContext {
     jclass managedCls;              //Managed `VncClient` class
     jmethodID cbFramebufferUpdated; //Cached reference to managed callback
 
-    JNIEnv *getEnv() const {
+    [[nodiscard]]
+    JNIEnv *getEnvUnchecked() const {
         JNIEnv *env = nullptr;
 
         if (vm != nullptr && vm->GetEnv((void **) &env, JNI_VERSION_1_6) == JNI_OK)
             return env;
 
-        return nullptr; //Should not happen
+        return nullptr;
+    }
+
+    [[nodiscard]]
+    JNIEnv *getEnv() const {
+        JNIEnv *env = getEnvUnchecked();
+        if (env)
+            return env;
+
+        abort(); // Just crash if we can't get JNIEnv
     }
 };
 
@@ -39,17 +49,17 @@ static JniContext context{};
  * Called when our library is loaded.
  */
 JNIEXPORT jint
-JNI_OnLoad(JavaVM *vm, void *unused) {
+JNI_OnLoad(JavaVM *vm, void *) {
     context.vm = vm;
 
-    if (context.getEnv() == nullptr)
+    if (context.getEnvUnchecked() == nullptr)
         return JNI_ERR;
 
     return JNI_VERSION_1_6;
 }
 
 JNIEXPORT void
-JNI_OnUnload(JavaVM *vm, void *reserved) {
+JNI_OnUnload(JavaVM *, void *) {
     if (context.managedCls) {
         context.getEnv()->DeleteGlobalRef(context.managedCls);
         context.managedCls = nullptr;
@@ -83,6 +93,8 @@ static char *onGetPassword(rfbClient *client) {
 
     auto mid = env->GetMethodID(cls, "cbGetPassword", "()Ljava/lang/String;");
     auto jPassword = (jstring) env->CallObjectMethod(obj, mid);
+    if (env->ExceptionCheck())
+        return nullptr;
 
     return getNativeStrCopy(env, jPassword);
 }
@@ -103,7 +115,7 @@ static rfbCredential *onGetCredential(rfbClient *client, int credentialType) {
     jmethodID mid = env->GetMethodID(cls, "cbGetCredential",
                                      "()Lcom/gaurav/avnc/vnc/UserCredential;");
     jobject jCredential = env->CallObjectMethod(obj, mid);
-    if (jCredential == nullptr) {
+    if (!jCredential || env->ExceptionCheck()) {
         return nullptr;
     }
 
@@ -128,9 +140,14 @@ static rfbBool onVerifyServerCertificate(rfbClient *client, const unsigned char 
     auto env = context.getEnv();
     auto cls = context.managedCls;
 
-    jmethodID mid = env->GetMethodID(cls, "cbVerifyServerCertificate", "([B)Z");
     jbyteArray bytes = env->NewByteArray(der_len);
+    if (!bytes) {
+        rfbClientErr("onVerifyServerCertificate: Unable to allocate memory for DER");
+        return FALSE;
+    }
     env->SetByteArrayRegion(bytes, 0, der_len, reinterpret_cast<const jbyte *>(der));
+
+    jmethodID mid = env->GetMethodID(cls, "cbVerifyServerCertificate", "([B)Z");
     auto result = env->CallBooleanMethod(obj, mid, bytes);
     env->DeleteLocalRef(bytes);
     return result ? TRUE : FALSE;
@@ -152,9 +169,14 @@ static void onGotXCutText(rfbClient *client, const char *text, int len, bool is_
     auto env = context.getEnv();
     auto cls = context.managedCls;
 
-    jmethodID mid = env->GetMethodID(cls, "cbGotXCutText", "([BZ)V");
     jbyteArray bytes = env->NewByteArray(len);
+    if (!bytes) {
+        rfbClientErr("onGotXCutText: Unable to allocate memory for cut text");
+        return;
+    }
     env->SetByteArrayRegion(bytes, 0, len, reinterpret_cast<const jbyte *>(text));
+
+    jmethodID mid = env->GetMethodID(cls, "cbGotXCutText", "([BZ)V");
     env->CallVoidMethod(obj, mid, bytes, is_utf8);
     env->DeleteLocalRef(bytes);
 }
@@ -239,21 +261,19 @@ static rfbBool onMallocFrameBuffer(rfbClient *client) {
     return TRUE;
 }
 
-static void onGotCursorShape(rfbClient *client, int xHot, int yHot, int width, int height, int bytesPerPixel) {
+static void onGotCursorShape(rfbClient *client, int xHot, int yHot, int width, int height, int /*bytesPerPixel*/) {
     auto ex = getClientExtension(client);
+    auto obj = getManagedClient(client);
+    auto env = context.getEnv();
+    auto cls = context.managedCls;
 
     LOCK(ex->mutex);
-
-    //Steel buffers from rfbClient
     updateCursor(ex->cursor, client->rcSource, client->rcMask, (uint16_t) width, (uint16_t) height,
                  (uint16_t) xHot, (uint16_t) yHot);
-    client->rcSource = NULL;
-    client->rcMask = NULL;
-
     UNLOCK(ex->mutex);
 
-    //Fake framebuffer update to trigger rendering
-    onFinishedFrameBufferUpdate(client);
+    jmethodID mid = env->GetMethodID(cls, "cbHandleCursorInfo", "(IIII)V");
+    env->CallVoidMethod(obj, mid, width, height, xHot, yHot);
 }
 
 /**
@@ -290,7 +310,6 @@ Java_com_gaurav_avnc_vnc_VncClient_nativeClientCreate(JNIEnv *env, jobject thiz)
 
     setCallbacks(client);
     client->canHandleNewFBSize = TRUE;
-    client->interruptFd = ex->interruptReadFd;
 
     //Attach reference to managed object
     auto obj = env->NewGlobalRef(thiz);
@@ -301,7 +320,7 @@ Java_com_gaurav_avnc_vnc_VncClient_nativeClientCreate(JNIEnv *env, jobject thiz)
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_gaurav_avnc_vnc_VncClient_nativeConfigure(JNIEnv *env, jobject thiz, jlong client_ptr,
+Java_com_gaurav_avnc_vnc_VncClient_nativeConfigure(JNIEnv * /*env*/, jobject /*thiz*/, jlong client_ptr,
                                                    jint securityType, jboolean use_local_cursor, jint image_quality,
                                                    jboolean use_raw_encoding) {
     auto client = (rfbClient *) client_ptr;
@@ -335,7 +354,7 @@ Java_com_gaurav_avnc_vnc_VncClient_nativeConfigure(JNIEnv *env, jobject thiz, jl
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_gaurav_avnc_vnc_VncClient_nativeSetDest(JNIEnv *env, jobject thiz, jlong client_ptr,
+Java_com_gaurav_avnc_vnc_VncClient_nativeSetDest(JNIEnv *env, jobject /*thiz*/, jlong client_ptr,
                                                  jstring host, jint port) {
     auto client = (rfbClient *) client_ptr;
     client->destHost = getNativeStrCopy(env, host);
@@ -344,7 +363,7 @@ Java_com_gaurav_avnc_vnc_VncClient_nativeSetDest(JNIEnv *env, jobject thiz, jlon
 
 extern "C"
 JNIEXPORT jboolean JNICALL
-Java_com_gaurav_avnc_vnc_VncClient_nativeInit(JNIEnv *env, jobject thiz, jlong client_ptr,
+Java_com_gaurav_avnc_vnc_VncClient_nativeInit(JNIEnv *env, jobject /*thiz*/, jlong client_ptr,
                                               jstring host, jint port) {
     auto client = (rfbClient *) client_ptr;
 
@@ -356,24 +375,11 @@ Java_com_gaurav_avnc_vnc_VncClient_nativeInit(JNIEnv *env, jobject thiz, jlong c
     }
 
     return JNI_FALSE;
-
-}
-extern "C"
-JNIEXPORT jboolean JNICALL
-Java_com_gaurav_avnc_vnc_VncClient_nativeIsServerMacOS(JNIEnv *env, jobject thiz, jlong client_ptr) {
-    auto client = (rfbClient *) client_ptr;
-    return client->serverMajor == 3 && client->serverMinor == 889;
 }
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_gaurav_avnc_vnc_VncClient_nativeInterrupt(JNIEnv *env, jobject thiz, jlong client_ptr) {
-    setInterrupt((rfbClient *) client_ptr);
-}
-
-extern "C"
-JNIEXPORT void JNICALL
-Java_com_gaurav_avnc_vnc_VncClient_nativeCleanup(JNIEnv *env, jobject thiz,
+Java_com_gaurav_avnc_vnc_VncClient_nativeCleanup(JNIEnv *env, jobject /*thiz*/,
                                                  jlong client_ptr) {
     auto client = (rfbClient *) client_ptr;
 
@@ -391,11 +397,11 @@ Java_com_gaurav_avnc_vnc_VncClient_nativeCleanup(JNIEnv *env, jobject thiz,
 
 extern "C"
 JNIEXPORT jboolean JNICALL
-Java_com_gaurav_avnc_vnc_VncClient_nativeProcessServerMessage(JNIEnv *env, jobject thiz,
+Java_com_gaurav_avnc_vnc_VncClient_nativeProcessServerMessage(JNIEnv * /*env*/, jobject /*thiz*/,
                                                               jlong client_ptr) {
     auto client = (rfbClient *) client_ptr;
 
-    auto waitResult = WaitForMessageInterruptible(client, 1000000, client->interruptFd);
+    auto waitResult = WaitForMessage(client, 1000000);
 
     if (waitResult == 0) // Timeout
         return JNI_TRUE;
@@ -403,25 +409,29 @@ Java_com_gaurav_avnc_vnc_VncClient_nativeProcessServerMessage(JNIEnv *env, jobje
     if (waitResult > 0 && HandleRFBServerMessage(client))
         return JNI_TRUE;
 
-    if (errno == EINTR)
-        rfbClientLog("Message processing interrupted");
-
     return JNI_FALSE;
 }
 
 extern "C"
 JNIEXPORT jstring JNICALL
-Java_com_gaurav_avnc_vnc_VncClient_nativeGetLastErrorStr(JNIEnv *env, jobject thiz) {
+Java_com_gaurav_avnc_vnc_VncClient_nativeGetLastErrorStr(JNIEnv *env, jobject/*thiz*/) {
     auto str = errnoToStr(errno);
     return env->NewStringUTF(str);
 }
 
 extern "C"
 JNIEXPORT jboolean JNICALL
-Java_com_gaurav_avnc_vnc_VncClient_nativeSendKeyEvent(JNIEnv *env, jobject thiz, jlong client_ptr,
+Java_com_gaurav_avnc_vnc_VncClient_nativeSendKeyEvent(JNIEnv * /*env*/, jobject /*thiz*/, jlong client_ptr,
                                                       jint key_sym, jint xt_code, jboolean is_down) {
     auto client = (rfbClient *) client_ptr;
     rfbBool down = is_down ? TRUE : FALSE;
+
+    // Remap Alt key to Meta key for MacOS
+    auto isServerMacOS = client->serverMajor == 3 && client->serverMinor == 889;
+    if (isServerMacOS) {
+        if (key_sym == 0xffe9  /* Left alt  */) key_sym = 0xffe7  /* Left meta  */;
+        if (key_sym == 0xffea  /* Right alt */) key_sym = 0xffe8  /* Right meta */;
+    }
 
     if (xt_code > 0 && SendExtendedKeyEvent(client, key_sym, xt_code, down))
         return JNI_TRUE;
@@ -431,14 +441,14 @@ Java_com_gaurav_avnc_vnc_VncClient_nativeSendKeyEvent(JNIEnv *env, jobject thiz,
 
 extern "C"
 JNIEXPORT jboolean JNICALL
-Java_com_gaurav_avnc_vnc_VncClient_nativeSendPointerEvent(JNIEnv *env, jobject thiz, jlong client_ptr, jint x, jint y,
-                                                          jint mask) {
+Java_com_gaurav_avnc_vnc_VncClient_nativeSendPointerEvent(JNIEnv * /*env*/, jobject /*thiz*/, jlong client_ptr,
+                                                          jint x, jint y, jint mask) {
     return (jboolean) SendPointerEvent((rfbClient *) client_ptr, x, y, mask);
 }
 
 extern "C"
 JNIEXPORT jboolean JNICALL
-Java_com_gaurav_avnc_vnc_VncClient_nativeSendCutText(JNIEnv *env, jobject thiz, jlong client_ptr, jbyteArray bytes,
+Java_com_gaurav_avnc_vnc_VncClient_nativeSendCutText(JNIEnv *env, jobject /*thiz*/, jlong client_ptr, jbyteArray bytes,
                                                      jboolean is_utf8) {
     auto client = (rfbClient *) client_ptr;
     auto textBuffer = env->GetByteArrayElements(bytes, nullptr);
@@ -455,63 +465,59 @@ Java_com_gaurav_avnc_vnc_VncClient_nativeSendCutText(JNIEnv *env, jobject thiz, 
 
 extern "C"
 JNIEXPORT jboolean JNICALL
-Java_com_gaurav_avnc_vnc_VncClient_nativeIsUTF8CutTextSupported(JNIEnv *env, jobject thiz, jlong client_ptr) {
+Java_com_gaurav_avnc_vnc_VncClient_nativeIsUTF8CutTextSupported(JNIEnv * /*env*/, jobject /*thiz*/, jlong client_ptr) {
     return (jboolean) (((rfbClient *) client_ptr)->extendedClipboardServerCapabilities != 0);
 }
 
 extern "C"
 JNIEXPORT jboolean JNICALL
-Java_com_gaurav_avnc_vnc_VncClient_nativeSetDesktopSize(JNIEnv *env, jobject thiz, jlong client_ptr, jint width,
-                                                        jint height) {
+Java_com_gaurav_avnc_vnc_VncClient_nativeSetDesktopSize(JNIEnv * /*env*/, jobject /*thiz*/, jlong client_ptr,
+                                                        jint width, jint height) {
     return (jboolean) SendExtDesktopSize((rfbClient *) client_ptr, width, height);
 }
 
 extern "C"
 JNIEXPORT jboolean JNICALL
-Java_com_gaurav_avnc_vnc_VncClient_nativeRefreshFrameBuffer(JNIEnv *env, jobject thiz, jlong clientPtr) {
+Java_com_gaurav_avnc_vnc_VncClient_nativeRefreshFrameBuffer(JNIEnv * /*env*/, jobject /*thiz*/, jlong clientPtr) {
     auto client = (rfbClient *) clientPtr;
     return (jboolean) SendFramebufferUpdateRequest(client, 0, 0, client->width, client->height, TRUE);
 }
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_gaurav_avnc_vnc_VncClient_nativePauseFramebufferUpdates(JNIEnv *env, jobject thiz, jlong client_ptr,
+Java_com_gaurav_avnc_vnc_VncClient_nativePauseFramebufferUpdates(JNIEnv * /*env*/, jobject /*thiz*/, jlong client_ptr,
                                                                  jboolean pause) {
-    auto client = ((rfbClient *) client_ptr);
-    auto wasPaused = client->pauseFramebufferUpdates;
-    client->pauseFramebufferUpdates = pause;
-    if (wasPaused && !pause)
-        SendFramebufferUpdateRequest(client, 0, 0, client->width, client->height, FALSE);
+    ((rfbClient *) client_ptr)->pauseFramebufferUpdates = pause;
 }
 
 extern "C"
 JNIEXPORT jstring JNICALL
-Java_com_gaurav_avnc_vnc_VncClient_nativeGetDesktopName(JNIEnv *env, jobject thiz, jlong client_ptr) {
+Java_com_gaurav_avnc_vnc_VncClient_nativeGetDesktopName(JNIEnv *env, jobject /*thiz*/, jlong client_ptr) {
     auto client = (rfbClient *) client_ptr;
     return env->NewStringUTF(client->desktopName ? client->desktopName : "");
 }
 
 extern "C"
 JNIEXPORT jint JNICALL
-Java_com_gaurav_avnc_vnc_VncClient_nativeGetWidth(JNIEnv *env, jobject thiz, jlong client_ptr) {
+Java_com_gaurav_avnc_vnc_VncClient_nativeGetWidth(JNIEnv * /*env*/, jobject /*thiz*/, jlong client_ptr) {
     return ((rfbClient *) client_ptr)->width;
 }
 
 extern "C"
 JNIEXPORT jint JNICALL
-Java_com_gaurav_avnc_vnc_VncClient_nativeGetHeight(JNIEnv *env, jobject thiz, jlong client_ptr) {
+Java_com_gaurav_avnc_vnc_VncClient_nativeGetHeight(JNIEnv * /*env*/, jobject /*thiz*/, jlong client_ptr) {
     return ((rfbClient *) client_ptr)->height;
 }
 
 extern "C"
 JNIEXPORT jboolean JNICALL
-Java_com_gaurav_avnc_vnc_VncClient_nativeIsEncrypted(JNIEnv *env, jobject thiz, jlong client_ptr) {
+Java_com_gaurav_avnc_vnc_VncClient_nativeIsEncrypted(JNIEnv * /*env*/, jobject /*thiz*/, jlong client_ptr) {
     return static_cast<jboolean>(((rfbClient *) client_ptr)->tlsSession ? JNI_TRUE : JNI_FALSE);
 }
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_gaurav_avnc_vnc_VncClient_nativeUploadFrameTexture(JNIEnv *env, jobject thiz,
+Java_com_gaurav_avnc_vnc_VncClient_nativeUploadFrameTexture(JNIEnv * /*env*/, jobject /*thiz*/,
                                                             jlong client_ptr) {
     auto client = (rfbClient *) client_ptr;
     auto ex = getClientExtension(client);
@@ -539,75 +545,26 @@ Java_com_gaurav_avnc_vnc_VncClient_nativeUploadFrameTexture(JNIEnv *env, jobject
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_gaurav_avnc_vnc_VncClient_nativeUploadCursor(JNIEnv *env, jobject thiz, jlong client_ptr, jint px, jint py) {
+Java_com_gaurav_avnc_vnc_VncClient_nativeUploadCursorTexture(JNIEnv * /*env*/, jobject /*thiz*/, jlong client_ptr) {
 
     auto client = (rfbClient *) client_ptr;
     auto ex = getClientExtension(client);
     auto cursor = ex->cursor;
 
-    if (!cursor)
+    if (!cursor || !cursor->buffer)
         return;
-
-    //Current algo for cursor rendering is slightly weird. Main issue is that
-    //glTexSubImage2D() does not perform any composition with target texture.
-    //So, we have to manually blend transparent/invalid pixels of the cursor
-    //with corresponding pixels from framebuffer. scratchBuffer is used for
-    //this composition.
 
     LOCK(ex->mutex);
 
-    //Effective cursor position in framebuffer
-    int32_t fbCursorX = px - cursor->xHot;
-    int32_t fbCursorY = py - cursor->yHot;
-
-    //Rectangular portion of the framebuffer to be updated.
-    //Cursor can overflow outside the framebuffer if moved near the edges,
-    //but glTexSubImage2D() doesn't allow values outside target texture,
-    //so we need to only update the intersection of framebuffer & cursor.
-    int32_t left = -1, top = -1, right = -1, bottom = -1;
-
-    auto fb = (uint32_t *) client->frameBuffer;
-    auto buffer = (uint32_t *) cursor->buffer;
-    auto scratch = (uint32_t *) cursor->scratchBuffer;
-    auto mask = cursor->mask;
-
-    //Scratch buffer index
-    int32_t z = 0;
-
-    for (int32_t y = 0; y < cursor->height; ++y) {
-        for (int32_t x = 0; x < cursor->width; ++x) {
-
-            //Corresponding pixel in framebuffer
-            auto fbX = fbCursorX + x;
-            auto fbY = fbCursorY + y;
-
-            if (fbX >= 0 && fbX < ex->fbRealWidth && fbY >= 0 && fbY < ex->fbRealHeight) {
-                auto isValidPixel = mask[y * cursor->width + x];
-                if (isValidPixel)
-                    scratch[z++] = buffer[y * cursor->width + x];
-                else
-                    scratch[z++] = fb[fbY * ex->fbRealWidth + fbX];
-
-                if (left == -1 && top == -1) {
-                    left = fbX;
-                    top = fbY;
-                }
-                right = fbX;
-                bottom = fbY;
-            }
-        }
-    }
-
-    if (left >= 0 && top >= 0)
-        glTexSubImage2D(GL_TEXTURE_2D,
-                        0,
-                        left,
-                        top,
-                        right - left + 1,
-                        bottom - top + 1,
-                        GL_RGBA,
-                        GL_UNSIGNED_BYTE,
-                        scratch);
+    glTexImage2D(GL_TEXTURE_2D,
+                 0,
+                 GL_RGBA,
+                 cursor->width,
+                 cursor->height,
+                 0,
+                 GL_RGBA,
+                 GL_UNSIGNED_BYTE,
+                 cursor->buffer);
 
     UNLOCK(ex->mutex);
 }

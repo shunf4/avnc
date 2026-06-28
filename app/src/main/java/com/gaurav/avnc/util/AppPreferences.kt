@@ -24,6 +24,7 @@ class AppPreferences(context: Context) {
 
     inner class UI {
         val theme = StringLivePref("theme", "system")
+        var bell by BooleanPref("bell_enabled", true)
         var preferAdvancedEditor by BooleanPref("prefer_advanced_editor", false)
         val sortServerList = BooleanLivePref("sort_server_list", false)
     }
@@ -36,6 +37,7 @@ class AppPreferences(context: Context) {
         val keepScreenOn; get() = prefs.getBoolean("keep_screen_on", true)
         val toolbarAlignment; get() = prefs.getString("toolbar_alignment", "start")
         val toolbarOpenWithSwipe; get() = prefs.getBoolean("toolbar_open_with_swipe", true)
+        val toolbarOpenWithButton; get() = prefs.getBoolean("toolbar_open_with_button", false)
         val zoomMax; get() = prefs.getInt("zoom_max", 500) / 100F
         val zoomMin; get() = prefs.getInt("zoom_min", 50) / 100F
         val perOrientationZoom; get() = prefs.getBoolean("per_orientation_zoom", true)
@@ -61,6 +63,7 @@ class AppPreferences(context: Context) {
         val swipeSensitivity; get() = prefs.getInt("gesture_swipe_sensitivity", 10) / 10f
         val invertVerticalScrolling; get() = prefs.getBoolean("invert_vertical_scrolling", false)
         val directModeTapOnlyPlacesMouse; get() = prefs.getBoolean("direct_mode_tap_only_places_mouse", false)
+        val quickTap1Enabled; get() = ((doubleTap == "none" || doubleTap == "double-click") && doubleTapSwipe == "none")
     }
 
     inner class Input {
@@ -69,8 +72,11 @@ class AppPreferences(context: Context) {
         val vkOpenWithKeyboard; get() = prefs.getBoolean("vk_open_with_keyboard", false)
         val vkShowAll; get() = prefs.getBoolean("vk_show_all", false)
         var vkLayout by StringPref("vk_keys_layout", null)
+        val vkRowCount; get() = prefs.getString("vk_row_count", null)?.toIntOrNull() ?: 2
+        val vkUseSuperWithSingleTap; get() = prefs.getBoolean("vk_use_super_with_single_tap", false)
 
         val mousePassthrough; get() = prefs.getBoolean("mouse_passthrough", true)
+        val capturePointer; get() = mousePassthrough && prefs.getBoolean("capture_pointer", false)
         val hideLocalCursor; get() = prefs.getBoolean("hide_local_cursor", false)
         val hideRemoteCursor; get() = prefs.getBoolean("hide_remote_cursor", false)
         val mouseBack; get() = prefs.getString("mouse_back", "right-click")!!
@@ -95,8 +101,10 @@ class AppPreferences(context: Context) {
      */
     inner class RunInfo {
         var hasShownViewerHelp by BooleanPref("run_info_has_shown_viewer_help", false)
-        var hasShownV2WelcomeMsg by BooleanPref("run_info_has_shown_v2_welcome_msg", false)
-        var showVirtualKeys by BooleanPref("run_info_show_virtual_keys", false)
+        var hasShownV3WelcomeMsg by BooleanPref("run_info_has_shown_v3_welcome_msg", false)
+        var showVirtualKeys by BooleanPref("run_info_show_virtual_keys", true)
+        var virtualKeysTextBoxVisible by BooleanPref("run_info_virtual_keys_textbox_visible", false)
+        var toolbarOpenerBtnVerticalBias by FloatPref("run_info_toolbar_opener_vertical_bias", .5f)
     }
 
     val ui = UI()
@@ -113,6 +121,7 @@ class AppPreferences(context: Context) {
 
     inner class BooleanPref(val key: String, default: Boolean) : Pref<Boolean>({ getBoolean(key, default) }, { putBoolean(key, it) })
     inner class StringPref(val key: String, default: String?) : Pref<String?>({ getString(key, default) }, { putString(key, it) })
+    inner class FloatPref(val key: String, default: Float) : Pref<Float>({ getFloat(key, default) }, { putFloat(key, it) })
 
     /**
      * For some preference changes we want to provide live feedback to user.
@@ -159,6 +168,18 @@ class AppPreferences(context: Context) {
         if (prefs.getBoolean("run_info_has_connected_successfully", false)) prefs.edit {
             remove("run_info_has_connected_successfully")
             putBoolean("run_info_has_shown_viewer_help", true)
+        }
+
+        if (!prefs.getBoolean("run_info_right_meta_keys_migrated", false)) prefs.edit {
+            prefs.getString("vk_keys_layout", null)?.let { old ->
+                val new = old
+                        .replace("RightShift", "LeftShift")
+                        .replace("RightCtrl", "LeftCtrl")
+                        .replace("RightAlt", "LeftAlt")
+                        .replace("RightSuper", "LeftSuper")
+                putString("vk_keys_layout", new)
+            }
+            putBoolean("run_info_right_meta_keys_migrated", true)
         }
     }
 }

@@ -113,13 +113,17 @@ class PrefsActivity : AppCompatActivity(), PreferenceFragmentCompat.OnPreference
                 }
             }
 
+            findPreference<SwitchPreference>("capture_pointer")!!.apply {
+                showIf { Build.VERSION.SDK_INT >= 26 }
+            }
+
             findPreference<ListPreferenceEx>("gesture_swipe1")!!.apply {
                 enableIf { it["gesture_style"] != "touchpad" }
                 disabledStateSummary = getString(R.string.pref_gesture_action_move_pointer)
             }
             findPreference<ListPreferenceEx>("gesture_long_press_swipe")!!.apply {
                 enableIf { it["gesture_long_press"] != "left-press" }
-                disabledStateSummary = getString(R.string.pref_gesture_action_none)
+                disabledStateSummary = getText(R.string.pref_long_press_swipe_disabled_summary)
             }
 
             // To reduce clutter & avoid 'UI overload', pref to invert vertical scrolling is

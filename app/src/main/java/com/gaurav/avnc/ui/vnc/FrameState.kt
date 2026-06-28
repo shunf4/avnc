@@ -10,7 +10,6 @@ package com.gaurav.avnc.ui.vnc
 
 import android.graphics.PointF
 import android.graphics.RectF
-import com.gaurav.avnc.ui.vnc.FrameState.Snapshot
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -154,30 +153,31 @@ class FrameState(
             val scale: Float
     )
 
-    private val lock = Any()
-    private inline fun <T> withLock(block: () -> T) = synchronized(lock) { block() }
-
-    fun setFramebufferSize(w: Float, h: Float) = withLock {
+    @Synchronized
+    fun setFramebufferSize(w: Float, h: Float) {
         fbWidth = w
         fbHeight = h
         calculateBaseScale()
         coerceValues()
     }
 
-    fun setViewportSize(w: Float, h: Float) = withLock {
+    @Synchronized
+    fun setViewportSize(w: Float, h: Float) {
         vpWidth = w
         vpHeight = h
         coerceValues()
     }
 
-    fun setWindowSize(w: Float, h: Float) = withLock {
+    @Synchronized
+    fun setWindowSize(w: Float, h: Float) {
         windowWidth = w
         windowHeight = h
         calculateBaseScale()
         coerceValues()
     }
 
-    fun setSafeArea(rect: RectF) = withLock {
+    @Synchronized
+    fun setSafeArea(rect: RectF) {
         safeArea = RectF(rect)
         coerceValues()
     }
@@ -185,19 +185,30 @@ class FrameState(
     /**
      * Adjust zoom scale according to give [scaleFactor].
      *
-     * Returns 'how much' scale factor is actually applied (after coercing).
+     * Focus point of zoom can be specified via [fx] & [fy]. If possible,
+     * frame will be panned to keep the focus point 'fixed' on screen.
      */
-    fun updateZoom(scaleFactor: Float): Float = withLock {
+    @Synchronized
+    fun updateZoom(scaleFactor: Float, fx: Float = 0f, fy: Float = 0f) {
         val oldScale = zoomScale
         val newScale = zoomScale * scaleFactor
 
         zoomScale = snapZoom(oldScale, newScale)
         coerceValues()
 
-        return zoomScale / oldScale //Applied scale factor
+        // How much zoom was actually changed
+        val appliedScaleFactor = zoomScale / oldScale
+
+        //Calculate how much the focus would shift after scaling
+        val dfx = (fx - frameX) * (appliedScaleFactor - 1)
+        val dfy = (fy - frameY) * (appliedScaleFactor - 1)
+
+        //Translate in opposite direction to keep the focus fixed on screen
+        pan(-dfx, -dfy)
     }
 
-    fun setZoom(zoom1: Float, zoom2: Float) = withLock {
+    @Synchronized
+    fun setZoom(zoom1: Float, zoom2: Float) {
         zoomScale1 = zoom1
         zoomScale2 = zoom2
         coerceValues()
@@ -206,7 +217,8 @@ class FrameState(
     /**
      * Shift frame by given delta.
      */
-    fun pan(deltaX: Float, deltaY: Float) = withLock {
+    @Synchronized
+    fun pan(deltaX: Float, deltaY: Float) {
         frameX += deltaX
         frameY += deltaY
         coerceValues()
@@ -215,7 +227,8 @@ class FrameState(
     /**
      * Move frame to given position.
      */
-    fun moveTo(x: Float, y: Float) = withLock {
+    @Synchronized
+    fun moveTo(x: Float, y: Float) {
         frameX = x
         frameY = y
         coerceValues()
@@ -226,6 +239,7 @@ class FrameState(
      * Not all viewport points have a corresponding framebuffer point
      * because drawn frame can be smaller than viewport.
      */
+    @Synchronized
     fun toFbUnchecked(vpPoint: PointF): PointF {
         val fbX = (vpPoint.x - frameX) / scale
         val fbY = (vpPoint.y - frameY) / scale
@@ -236,6 +250,7 @@ class FrameState(
      * Converts given viewport point to corresponding framebuffer point.
      * Returns null if given point lies outside of framebuffer.
      */
+    @Synchronized
     fun toFb(vpPoint: PointF): PointF? {
         val fb = toFbUnchecked(vpPoint)
         if (fb.x < 0F || fb.y < 0f || fb.x >= fbWidth || fb.y >= fbHeight)
@@ -247,6 +262,7 @@ class FrameState(
     /**
      * Converts given framebuffer point to corresponding point in viewport.
      */
+    @Synchronized
     fun toVP(fbPoint: PointF): PointF {
         return PointF(fbPoint.x * scale + frameX, fbPoint.y * scale + frameY)
     }
@@ -254,7 +270,8 @@ class FrameState(
     /**
      * Returns immutable & consistent snapshot of frame state.
      */
-    fun getSnapshot(): Snapshot = withLock {
+    @Synchronized
+    fun getSnapshot(): Snapshot {
         return Snapshot(frameX = frameX, frameY = frameY,
                         fbWidth = fbWidth, fbHeight = fbHeight,
                         vpWidth = vpWidth, vpHeight = vpHeight, scale = scale)

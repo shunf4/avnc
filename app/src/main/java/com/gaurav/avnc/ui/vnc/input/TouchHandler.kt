@@ -1,12 +1,12 @@
 /*
- * Copyright (c) 2020  Gaurav Ujjwal.
+ * Copyright (c) 2025  Gaurav Ujjwal.
  *
  * SPDX-License-Identifier:  GPL-3.0-or-later
  *
  * See COPYING.txt for more details.
  */
 
-package com.gaurav.avnc.ui.vnc
+package com.gaurav.avnc.ui.vnc.input
 
 import android.content.Context
 import android.graphics.PointF
@@ -19,6 +19,7 @@ import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.ViewConfiguration
+import com.gaurav.avnc.ui.vnc.FrameView
 import com.gaurav.avnc.util.AppPreferences
 import com.gaurav.avnc.vnc.PointerButton
 import kotlin.math.PI
@@ -56,6 +57,10 @@ class TouchHandler(private val frameView: FrameView, private val dispatcher: Dis
 
     fun onGenericMotionEvent(event: MotionEvent): Boolean {
         return onHoverEvent(event) || handleStylusEvent(event) || handleMouseEvent(event)
+    }
+
+    fun onCapturedPointerEvent(event: MotionEvent): Boolean {
+        return handleCapturedPointerEvent(event)
     }
 
     fun onHoverEvent(event: MotionEvent): Boolean {
@@ -110,6 +115,37 @@ class TouchHandler(private val frameView: FrameView, private val dispatcher: Dis
         return !(e.buttonState == 0 && e.getToolType(0) != MotionEvent.TOOL_TYPE_MOUSE)
     }
 
+    private fun handleCapturedPointerEvent(e: MotionEvent): Boolean {
+        if (Build.VERSION.SDK_INT < 26)
+            return false
+
+        val screenDensity = frameView.context.resources.displayMetrics.density
+        val dx: Float
+        val dy: Float
+
+        if (e.isFromSource(InputDevice.SOURCE_MOUSE_RELATIVE)) {
+            dx = getTotalAxisValue(e, MotionEvent.AXIS_X) * screenDensity
+            dy = getTotalAxisValue(e, MotionEvent.AXIS_Y) * screenDensity
+        } else if (e.isFromSource(InputDevice.SOURCE_TOUCHPAD)) {
+            dx = getTotalAxisValue(e, MotionEvent.AXIS_RELATIVE_X)
+            dy = getTotalAxisValue(e, MotionEvent.AXIS_RELATIVE_Y)
+        } else
+            return false
+
+        when (e.actionMasked) {
+            MotionEvent.ACTION_BUTTON_PRESS -> dispatcher.onCapturedMouseButtonDown(convertButton(e.actionButton))
+            MotionEvent.ACTION_BUTTON_RELEASE -> dispatcher.onCapturedMouseButtonUp(convertButton(e.actionButton))
+            MotionEvent.ACTION_MOVE -> dispatcher.onCapturedMouseMove(dx, dy)
+            MotionEvent.ACTION_SCROLL -> {
+                val hs = e.getAxisValue(MotionEvent.AXIS_HSCROLL)
+                val vs = e.getAxisValue(MotionEvent.AXIS_VSCROLL)
+                dispatcher.onCapturedMouseScroll(hs, vs)
+            }
+            else -> return false
+        }
+        return true
+    }
+
     /**
      * Convert from [MotionEvent] button to [PointerButton]
      */
@@ -124,6 +160,17 @@ class TouchHandler(private val frameView: FrameView, private val dispatcher: Dis
         (buttonState and MotionEvent.BUTTON_TERTIARY != 0) -> PointerButton.Middle
         (buttonState and MotionEvent.BUTTON_SECONDARY != 0) -> PointerButton.Right
         else -> PointerButton.Left
+    }
+
+    /**
+     * Returns value of given axis, added with historical values of the axis
+     */
+    private fun getTotalAxisValue(e: MotionEvent, axis: Int): Float {
+        var v = e.getAxisValue(axis)
+        repeat(e.historySize) {
+            v += e.getHistoricalAxisValue(axis, it)
+        }
+        return v
     }
 
 
@@ -185,13 +232,14 @@ class TouchHandler(private val frameView: FrameView, private val dispatcher: Dis
      * Finger Gestures (and everything else beside mouse & stylus)
      ****************************************************************************************/
     private val scaleDetector = ScaleGestureDetector(frameView.context, this).apply { isQuickScaleEnabled = false }
-    private val gestureDetector = GestureDetectorEx(frameView.context, FingerGestureListener(), pref.input.gesture.longPressDetectionEnabled)
+    private val gestureDetector = GestureDetectorEx(frameView.context, FingerGestureListener(), pref)
     private val swipeVsScale = SwipeVsScale()
     private val longPressSwipeEnabled = pref.input.gesture.longPressSwipeEnabled
     private val swipeSensitivity = pref.input.gesture.swipeSensitivity
 
 
     private fun handleGestureEvent(event: MotionEvent): Boolean {
+        dispatcher.accelerator.addMovement(event)
         swipeVsScale.onTouchEvent(event)
         scaleDetector.onTouchEvent(event)
         return gestureDetector.onTouchEvent(event)
@@ -264,7 +312,7 @@ class TouchHandler(private val frameView: FrameView, private val dispatcher: Dis
      * [GestureDetectorEx] is used to for this purpose. It internally uses stock
      * [GestureDetector], and some custom event processing to detect more gestures.
      */
-    private class GestureDetectorEx(context: Context, val listener: GestureListenerEx, val enableLongPress: Boolean) {
+    private class GestureDetectorEx(context: Context, val listener: GestureListenerEx, prefs: AppPreferences) {
 
         /**
          * Detected gestures. Some of these come directly from stock [GestureDetector],
@@ -293,6 +341,16 @@ class TouchHandler(private val frameView: FrameView, private val dispatcher: Dis
          * [onScrollAfterLongPress]
          * This is the long-press-swipe gesture. If scrolling after [longPressDetected] flag
          * is set, [onScrollAfterLongPress] is called.
+         *
+         * Quick Tap
+         * ---------
+         * Usually, we have to wait ~300ms inside [GestureDetector] to rule out double-tap
+         * before [onSingleTapConfirmed] can be called. But in some scenarios this delay
+         * can be avoided. When Quick Tap is enabled ([quickTap1Enabled]), [onSingleTapConfirmed]
+         * can be called immediately from [GestureDetector.OnGestureListener.onSingleTapUp].
+         *
+         * When Quick Tap is enabled, [onSingleTapConfirmed] is called twice instead of
+         * [onDoubleTapConfirmed] for double-tap gestures.
          */
         interface GestureListenerEx {
             fun onSingleTapConfirmed(e: MotionEvent)
@@ -322,20 +380,27 @@ class TouchHandler(private val frameView: FrameView, private val dispatcher: Dis
          * -                              +->| [innerDetector1] |
          * -                              |  +------------------+
          * -                              |   (tap, long-press)
-         * -   +----------------+  event  |
-         * -   | [onTouchEvent] |---------+
-         * -   +----------------+         |
          * -                              |
-         * -                              |  +------------------+  double-tap event   +------------------+
-         * -                              +->| [innerDetector2] |-------------------->| [innerDetector3] |
-         * -                                 +------------------+                     +------------------+
-         * -                                    (double-tap)                           (double-tap-swipe)
-         *
+         * -                              |
+         * -   +----------------+  event  |  +------------------+  double-tap event   +------------------+
+         * -   | [onTouchEvent] |---------+->| [innerDetector2] |-------------------->| [innerDetector3] |
+         * -   +----------------+         |  +------------------+                     +------------------+
+         * -                              |      (double-tap)                          (double-tap-swipe)
+         * -                              |
+         * -                              |
+         * -                              |   +------------------+
+         * -                              +-> | [innerDetector4] |
+         *                                    +------------------+
+         *                                        (quick-tap)
+         *                                                          
          */
         private val innerDetector1 = GestureDetector(context, InnerListener1())
         private val innerDetector2 = GestureDetector(context, InnerListener2()).apply { setIsLongpressEnabled(false) }
         private val innerDetector3 = GestureDetector(context, InnerListener3()).apply { setIsLongpressEnabled(false) }
+        private val innerDetector4 = GestureDetector(context, InnerListener4()).apply { setOnDoubleTapListener(null) }
 
+        private val quickTap1Enabled = prefs.input.gesture.quickTap1Enabled
+        private val longPressEnabled = prefs.input.gesture.longPressDetectionEnabled
         private var longPressDetected = false
         private var doubleTapDetected = false
         private var scrolling = false
@@ -349,12 +414,13 @@ class TouchHandler(private val frameView: FrameView, private val dispatcher: Dis
         private inner class InnerListener1 : SimpleOnGestureListener() {
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
 //                Log.i("TouchHandler", "onSingleTapConfirmed")
-                listener.onSingleTapConfirmed(e)
+                if (!quickTap1Enabled)
+                    listener.onSingleTapConfirmed(e)
                 return true
             }
 
             override fun onLongPress(e: MotionEvent) {
-                if (!enableLongPress)
+                if (!longPressEnabled)
                     return
 
                 if (doubleTapDetected)
@@ -383,6 +449,14 @@ class TouchHandler(private val frameView: FrameView, private val dispatcher: Dis
 
         private inner class InnerListener3 : SimpleOnGestureListener() {
             override fun onScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float) = handleScroll(e1, e2, dx, dy)
+        }
+
+        private inner class InnerListener4 : SimpleOnGestureListener() {
+            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                if (quickTap1Enabled)
+                    listener.onSingleTapConfirmed(e)
+                return true
+            }
         }
 
         private fun handleScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float): Boolean {
@@ -416,6 +490,8 @@ class TouchHandler(private val frameView: FrameView, private val dispatcher: Dis
         fun onTouchEvent(e: MotionEvent): Boolean {
             innerDetector1.onTouchEvent(e)
             innerDetector2.onTouchEvent(e)
+            if (quickTap1Enabled)
+                innerDetector4.onTouchEvent(e)
 
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
@@ -432,7 +508,7 @@ class TouchHandler(private val frameView: FrameView, private val dispatcher: Dis
                         if (longPressDetected && !doubleTapDetected && !scrolling && maxFingerDown <= 1)
                             listener.onLongPressConfirmed(downEvent)
 
-                        if (doubleTapDetected && !longPressDetected && !scrolling && maxFingerDown <= 1)
+                        if (doubleTapDetected && !longPressDetected && !scrolling && !quickTap1Enabled && maxFingerDown <= 1)
                             listener.onDoubleTapConfirmed(downEvent)
 
                         val gestureDuration = (e.eventTime - downEvent.eventTime)

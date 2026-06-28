@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.read
 import kotlin.concurrent.write
@@ -41,19 +42,16 @@ class VncClient(private val observer: Observer) {
 
     /**
      * Interface for event observer.
-     * DO NOT throw exceptions from these methods.
-     * There is NO guarantee about which thread will invoke [Observer] methods.
      */
     interface Observer {
-        fun onPasswordRequired(): String
-        fun onCredentialRequired(): UserCredential
-        fun onVerifyCertificate(certificate: X509Certificate): Boolean
-        fun onGotXCutText(text: String)
+        fun getVncPassword(): String
+        fun getVncCredentials(): UserCredential
+        fun verifyVncServerCertificate(certificate: X509Certificate): Boolean
+        fun onCutTextReceived(text: String)
         fun onFramebufferUpdated()
         fun onFramebufferSizeChanged(width: Int, height: Int)
         fun onPointerMoved(x: Int, y: Int)
-
-        //fun onBell()
+        fun onBell()
     }
 
     /**
@@ -79,15 +77,26 @@ class VncClient(private val observer: Observer) {
     private val stateLock = ReentrantReadWriteLock()
 
     /**
-     * In 'View-only' mode input to remote server is disabled
+     * If true, all input to remote server is disabled
      */
-    private var viewOnlyMode = false
+    private val inputDisabled = AtomicBoolean(false)
+
+    /**
+     * If true, client stops sending framebuffer update requests to server
+     */
+    val frameBufferUpdatesPaused = AtomicBoolean(false)
+
 
     /**
      * Latest pointer position. See [moveClientPointer].
      */
     var pointerX = 0; private set
     var pointerY = 0; private set
+
+    /**
+     * Cursor info, used by Renderer
+     */
+    var cursorInfo = CursorInfo()
 
     /**
      * Client-side cursor rendering creates a synchronization issue.
@@ -116,10 +125,9 @@ class VncClient(private val observer: Observer) {
      *
      * @param securityType RFB security type to use.
      */
-    fun configure(viewOnly: Boolean, securityType: Int, useLocalCursor: Boolean, imageQuality: Int, useRawEncoding: Boolean) {
+    fun configure(securityType: Int, useLocalCursor: Boolean, imageQuality: Int, useRawEncoding: Boolean) {
         stateLock.read {
             if (!connected && !destroyed) {
-                viewOnlyMode = viewOnly
                 nativeConfigure(nativePtr, securityType, useLocalCursor, imageQuality, useRawEncoding)
             }
         }
@@ -173,16 +181,6 @@ class VncClient(private val observer: Observer) {
             return nativeGetDesktopName(nativePtr)
         }
         return ""
-    }
-
-    /**
-     * Whether connected to a MacOS server
-     */
-    fun isConnectedToMacOS(): Boolean {
-        ifConnected {
-            return nativeIsServerMacOS(nativePtr)
-        }
-        return false
     }
 
     /**
@@ -252,20 +250,33 @@ class VncClient(private val observer: Observer) {
             nativeSetDesktopSize(nativePtr, width, height)
     }
 
+    fun setInputDisabled(disabled: Boolean) {
+        inputDisabled.set(disabled)
+    }
+
     /**
      * Sends frame buffer update request to remote server.
      */
     fun refreshFrameBuffer() = ifConnected {
-        nativeRefreshFrameBuffer(nativePtr)
+        if (!frameBufferUpdatesPaused.get())
+            nativeRefreshFrameBuffer(nativePtr)
     }
 
     /**
      * Change framebuffer update status.
      * If paused, client will effectively stop asking for framebuffer updates from server.
+     * This will do network IO when resuming, so must not be called from Main thread.
      */
-    fun pauseFramebufferUpdates(pause: Boolean) = ifConnected {
-        nativePauseFramebufferUpdates(nativePtr, pause)
+    fun setFrameBufferUpdatesPaused(pause: Boolean) {
+        stateLock.read {
+            if (destroyed || !frameBufferUpdatesPaused.compareAndSet(!pause, pause))
+                return
+
+            nativePauseFramebufferUpdates(nativePtr, pause)
+            refreshFrameBuffer()
+        }
     }
+
 
     /**
      * Puts framebuffer contents in currently active OpenGL texture.
@@ -276,25 +287,10 @@ class VncClient(private val observer: Observer) {
     }
 
     /**
-     * Upload cursor shape into framebuffer texture.
+     * Upload cursor contents in currently active OpenGL texture
      */
-    fun uploadCursor() = ifConnected {
-        nativeUploadCursor(nativePtr, pointerX, pointerY)
-    }
-
-    /**
-     * Try to interrupt long-running operations (e.g. [connect]) executing in other threads.
-     * This can be used to quickly finish/abandon these operations during connection shutdown,
-     * instead of waiting for the usual socket timeouts to kick in.
-     * For now, once interrupt flag is set for a client, it will remain set.
-     *
-     * Because this can be invoked from Main thread, read-lock is only tried once to avoid ANRs.
-     */
-    fun interrupt() {
-        stateLock.tryRead {
-            if (!destroyed)
-                nativeInterrupt(nativePtr)
-        }
+    fun uploadCursorTexture() = ifConnected {
+        nativeUploadCursorTexture(nativePtr)
     }
 
     /**
@@ -317,7 +313,7 @@ class VncClient(private val observer: Observer) {
     }
 
     private inline fun ifConnectedAndInteractive(block: () -> Unit) = ifConnected {
-        if (!viewOnlyMode)
+        if (!inputDisabled.get())
             block()
     }
 
@@ -365,24 +361,22 @@ class VncClient(private val observer: Observer) {
     private external fun nativeGetHeight(clientPtr: Long): Int
     private external fun nativeIsEncrypted(clientPtr: Long): Boolean
     private external fun nativeUploadFrameTexture(clientPtr: Long)
-    private external fun nativeUploadCursor(clientPtr: Long, px: Int, py: Int)
+    private external fun nativeUploadCursorTexture(clientPtr: Long)
     private external fun nativeGetLastErrorStr(): String
-    private external fun nativeIsServerMacOS(clientPtr: Long): Boolean
-    private external fun nativeInterrupt(clientPtr: Long)
     private external fun nativeCleanup(clientPtr: Long)
 
     @Keep
-    private fun cbGetPassword() = observer.onPasswordRequired()
+    private fun cbGetPassword() = observer.getVncPassword()
 
     @Keep
-    private fun cbGetCredential() = observer.onCredentialRequired()
+    private fun cbGetCredential() = observer.getVncCredentials()
 
     @Keep
     private fun cbVerifyServerCertificate(der: ByteArray): Boolean {
         val cert = ByteArrayInputStream(der).use {
             CertificateFactory.getInstance("X.509").generateCertificate(it)
         }
-        return observer.onVerifyCertificate(cert as X509Certificate)
+        return observer.verifyVncServerCertificate(cert as X509Certificate)
     }
 
     @Keep
@@ -391,7 +385,7 @@ class VncClient(private val observer: Observer) {
             val cutText = it.decode(ByteBuffer.wrap(bytes)).toString()
             if (cutText != lastCutText) {
                 lastCutText = cutText
-                observer.onGotXCutText(cutText)
+                observer.onCutTextReceived(cutText)
             }
         }
     }
@@ -404,12 +398,18 @@ class VncClient(private val observer: Observer) {
 
 
     @Keep
-    private fun cbBell() = Unit // observer.onBell()
+    private fun cbBell() = observer.onBell()
 
     @Keep
     private fun cbHandleCursorPos(x: Int, y: Int) {
         if (!ignorePointerMovesByServer)
             moveClientPointer(x, y)
+    }
+
+    @Keep
+    private fun cbHandleCursorInfo(width: Int, height: Int, xHot: Int, yHot: Int) {
+        cursorInfo = CursorInfo(width, height, xHot, yHot)
+        cbFinishedFrameBufferUpdate() // Fake call to trigger rendering
     }
 
 

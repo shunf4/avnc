@@ -15,16 +15,21 @@ import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.widget.Toast
+import android.widget.ToggleButton
 import androidx.annotation.RequiresApi
 import androidx.annotation.StringRes
 import androidx.core.view.GravityCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.isVisible
+import androidx.core.view.marginBottom
+import androidx.core.view.marginTop
 import androidx.drawerlayout.widget.DrawerLayout
 import com.gaurav.avnc.R
-import com.gaurav.avnc.viewmodel.VncViewModel.State
-import com.gaurav.avnc.viewmodel.VncViewModel.State.Companion.isConnected
+import com.gaurav.avnc.model.ServerProfile
 
 /**
  *
@@ -40,7 +45,7 @@ import com.gaurav.avnc.viewmodel.VncViewModel.State.Companion.isConnected
  *   || B |              |              |
  *   || t |              |              |
  *   || n |+------------+|    Scrim     |
- *   || s ||   Flyout   ||              |
+ *   || s ||  Flyouts   ||              |
  *   |+---++------------+|              |
  *   |                   |              |
  *   |                   |              |
@@ -58,10 +63,13 @@ class Toolbar(private val activity: VncActivity) {
     private val drawerLayout = activity.binding.drawerLayout
     private val drawerView = binding.root
     private val openWithSwipe = viewModel.pref.viewer.toolbarOpenWithSwipe
+    private val openWithButton = viewModel.pref.viewer.toolbarOpenWithButton
+    private val openerButton = activity.binding.openToolbarBtn
+    private val flyouts = mutableMapOf<ToggleButton, View>()
 
     fun initialize() {
         binding.keyboardBtn.setOnClickListener { activity.showKeyboard(); close() }
-        binding.zoomOptions.setOnLongClickListener { resetZoomToDefault(); close(); true }
+        binding.zoomOptionsToggle.setOnLongClickListener { resetZoomToDefault(); close(); true }
         binding.zoomResetBtn.setOnClickListener { resetZoomToDefault(); close() }
         binding.zoomResetBtn.setOnLongClickListener { resetZoom(); close(); true }
         binding.zoomLockBtn.setOnCheckedChangeListener { _, checked -> toggleZoomLock(checked); close() }
@@ -71,10 +79,13 @@ class Toolbar(private val activity: VncActivity) {
         // Root view is transparent. Click on it should work just like a click in scrim area
         drawerView.setOnClickListener { close() }
 
-        viewModel.state.observe(activity) { onStateChange(it) }
+        viewModel.inPiPMode.observe(activity) { if (it) close() }
 
         setupAlignment()
+        setupFlyouts()
         setupFlyoutClose()
+        setupOpenerButton()
+        setupViewModeSelection()
         setupGestureStyleSelection()
         setupGestureExclusionRect()
         setupDrawerCloseOnScrimSwipe()
@@ -86,6 +97,14 @@ class Toolbar(private val activity: VncActivity) {
 
     fun close() {
         drawerLayout.closeDrawer(drawerView)
+    }
+
+    fun onStateChange(isConnected: Boolean) {
+        if (Build.VERSION.SDK_INT >= 29)
+            updateGestureExclusionRect()
+
+        updateLockMode(isConnected)
+        openerButton.isVisible = openWithButton && isConnected
     }
 
     /**
@@ -130,6 +149,42 @@ class Toolbar(private val activity: VncActivity) {
         toast(R.string.msg_zoom_saved)
     }
 
+    private fun setupViewModeSelection() {
+        val viewModeButtonMap = mapOf(
+                ServerProfile.VIEW_MODE_NORMAL to R.id.view_mode_normal,
+                ServerProfile.VIEW_MODE_NO_INPUT to R.id.view_mode_no_input,
+                ServerProfile.VIEW_MODE_NO_VIDEO to R.id.view_mode_no_video
+        )
+
+        binding.viewModeGroup.let { group ->
+            check(group.childCount == viewModeButtonMap.size)
+
+            viewModel.activeViewMode.observe(activity) {
+                group.check(viewModeButtonMap[it] ?: R.id.view_mode_normal)
+            }
+
+            group.addOnButtonCheckedListener { _, checkedId, isChecked ->
+                if (isChecked) {
+                    if (viewModel.connected) { // Make sure profile is available
+                        val newMode = viewModeButtonMap.entries.first { it.value == checkedId }.key
+                        if (viewModel.activeViewMode.value != newMode) {
+                            viewModel.setViewMode(newMode)
+                            showViewModeChangeToast(newMode)
+                        }
+                    }
+                    close()
+                }
+            }
+        }
+    }
+
+    private fun showViewModeChangeToast(newMode: Int) {
+        when (newMode) {
+            ServerProfile.VIEW_MODE_NORMAL -> toast(R.string.msg_normal_view_mode)
+            ServerProfile.VIEW_MODE_NO_INPUT -> toast(R.string.msg_input_disabled)
+        }
+    }
+
     private fun setupGestureStyleSelection() {
         val styleButtonMap = mapOf(
                 "auto" to R.id.gesture_style_auto,
@@ -145,20 +200,13 @@ class Toolbar(private val activity: VncActivity) {
             }
 
             group.setOnCheckedChangeListener { _, id ->
-                if (viewModel.state.value.isConnected) { // Make sure profile is available
+                if (viewModel.connected) { // Make sure profile is available
                     val newStyle = styleButtonMap.entries.first { it.value == id }.key
-                    viewModel.setProfileGestureStyle(newStyle)
+                    viewModel.setGestureStyle(newStyle)
                 }
                 close()
             }
         }
-    }
-
-    private fun onStateChange(state: State) {
-        if (Build.VERSION.SDK_INT >= 29)
-            updateGestureExclusionRect()
-
-        updateLockMode(state.isConnected)
     }
 
     private fun updateLockMode(isConnected: Boolean) {
@@ -190,9 +238,13 @@ class Toolbar(private val activity: VncActivity) {
     private fun setupAlignment() {
         val gravity = if (viewModel.pref.viewer.toolbarAlignment == "start") GravityCompat.START else GravityCompat.END
 
-        val lp = drawerView.layoutParams as DrawerLayout.LayoutParams
-        lp.gravity = gravity
-        drawerView.layoutParams = lp
+        drawerView.layoutParams = (drawerView.layoutParams as DrawerLayout.LayoutParams).apply {
+            this.gravity = gravity
+        }
+
+        openerButton.layoutParams = (openerButton.layoutParams as FrameLayout.LayoutParams).apply {
+            this.gravity = gravity
+        }
 
         // Before layout pass, layoutDirection should be retrieved from Activity config
         val layoutDirection = activity.resources.configuration.layoutDirection
@@ -201,6 +253,7 @@ class Toolbar(private val activity: VncActivity) {
         // We need the layout direction based on alignment rather than language/locale
         // so that flyouts and button icons are properly ordered.
         drawerView.layoutDirection = if (isLeftAligned) View.LAYOUT_DIRECTION_LTR else View.LAYOUT_DIRECTION_RTL
+        openerButton.layoutDirection = drawerView.layoutDirection
 
         // Let the gesture group have natural layout as it contains text elements
         binding.gestureStyleGroup.layoutDirection = layoutDirection
@@ -223,7 +276,7 @@ class Toolbar(private val activity: VncActivity) {
      */
     @RequiresApi(29)
     private fun updateGestureExclusionRect() {
-        if (!openWithSwipe || !viewModel.state.value.isConnected) {
+        if (!openWithSwipe || !viewModel.connected) {
             drawerLayout.systemGestureExclusionRects = listOf()
         } else {
             // Area covered by primaryButtons, in drawerLayout's coordinate space
@@ -244,6 +297,23 @@ class Toolbar(private val activity: VncActivity) {
         }
     }
 
+    private fun setupFlyouts() {
+        flyouts += binding.viewModesToggle to binding.viewModeGroup
+        flyouts += binding.gestureStyleToggle to binding.gestureStyleGroup
+        flyouts += binding.zoomOptionsToggle to binding.zoomOptionsGroup
+
+        flyouts.values.forEach { it.isVisible = false }
+
+        flyouts.keys.forEach { toggle ->
+            toggle.setOnCheckedChangeListener { _, isChecked ->
+                flyouts[toggle]?.isVisible = isChecked
+
+                if (isChecked) // Close others
+                    flyouts.keys.forEach { if (it != toggle) it.isChecked = false }
+            }
+        }
+    }
+
     /**
      * Close flyouts after drawer is closed.
      *
@@ -255,8 +325,7 @@ class Toolbar(private val activity: VncActivity) {
         drawerLayout.addDrawerListener(object : DrawerLayout.SimpleDrawerListener() {
             override fun onDrawerClosed(closedView: View) {
                 if (closedView == drawerView) {
-                    binding.zoomOptions.isChecked = false
-                    binding.gestureStyleToggle.isChecked = false
+                    flyouts.keys.forEach { it.isChecked = false }
                 }
             }
         })
@@ -307,5 +376,48 @@ class Toolbar(private val activity: VncActivity) {
                 return false
             }
         })
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupOpenerButton() {
+        if (!openWithButton)
+            return
+
+        val runInfo = viewModel.pref.runInfo
+        var verticalBias = runInfo.toolbarOpenerBtnVerticalBias
+        val openerButtonParent = (openerButton.parent as ViewGroup)
+
+        val gestureListener = object : GestureDetector.SimpleOnGestureListener() {
+            override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
+                val parentHeight = openerButtonParent.height
+                val parentTouchY = openerButton.y + e2.y
+                verticalBias = parentTouchY / parentHeight
+                updateOpenerBtnPosition(openerButton, verticalBias)
+                return true
+            }
+        }
+        val gestureDetector = GestureDetector(activity, gestureListener)
+        gestureDetector.setIsLongpressEnabled(false)
+
+        openerButton.setOnTouchListener { v, e ->
+            if (e.actionMasked == MotionEvent.ACTION_UP && verticalBias != runInfo.toolbarOpenerBtnVerticalBias)
+                runInfo.toolbarOpenerBtnVerticalBias = verticalBias // Save position
+
+            gestureDetector.onTouchEvent(e)
+            v.onTouchEvent(e)
+        }
+        openerButton.setOnClickListener { open() }
+
+        openerButtonParent.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            updateOpenerBtnPosition(openerButton, verticalBias)
+        }
+    }
+
+    private fun updateOpenerBtnPosition(btn: View, verticalBias: Float) {
+        val parentHeight = (btn.parent as ViewGroup).height
+        val minY = btn.marginTop
+        val maxY = parentHeight - btn.height - btn.marginBottom
+        val y = (parentHeight * verticalBias).toInt().coerceAtMost(maxY).coerceAtLeast(minY)
+        btn.y = y.toFloat()
     }
 }

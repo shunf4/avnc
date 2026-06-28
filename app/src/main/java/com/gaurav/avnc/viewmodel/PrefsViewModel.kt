@@ -15,8 +15,6 @@ import androidx.room.withTransaction
 import com.gaurav.avnc.model.ServerProfile
 import com.gaurav.avnc.util.LiveEvent
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.IOException
 
@@ -117,7 +115,6 @@ class PrefsViewModel(app: Application) : BaseViewModel(app) {
             it.password = ""
             it.sshPassword = ""
             it.sshPrivateKey = ""
-            it.sshPrivateKeyPassword = ""
         }
     }
 }

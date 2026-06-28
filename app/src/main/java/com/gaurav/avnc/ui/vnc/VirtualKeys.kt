@@ -30,15 +30,19 @@ import android.widget.GridLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageButton
 import android.widget.ToggleButton
-import androidx.annotation.DrawableRes
 import androidx.appcompat.widget.AppCompatEditText
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat.Type
 import androidx.core.view.isVisible
 import androidx.viewpager.widget.PagerAdapter
 import androidx.viewpager.widget.ViewPager
 import com.gaurav.avnc.R
 import com.gaurav.avnc.databinding.VirtualKeysBinding
+import com.gaurav.avnc.ui.vnc.input.InputHandler
 import com.gaurav.avnc.util.AppPreferences
+import com.gaurav.avnc.util.addOnGlobalLayoutListener
+import com.gaurav.avnc.util.isTrue
 import kotlin.math.min
 import kotlin.math.sign
 
@@ -49,11 +53,10 @@ import kotlin.math.sign
  *
  * This class manages the inflation & visibility of virtual keys.
  */
-class VirtualKeys(activity: VncActivity) {
+class VirtualKeys(private val activity: VncActivity, private val inputHandler: InputHandler) {
 
     private val viewModel = activity.viewModel
     private val pref = activity.viewModel.pref
-    private val keyHandler = activity.keyHandler
     private val frameView = activity.binding.frameView
     private val stub = activity.binding.virtualKeysStub
     private val toggleKeys = mutableSetOf<ToggleButton>()
@@ -88,21 +91,18 @@ class VirtualKeys(activity: VncActivity) {
             hide()
             openedWithKb = false
         }
+
+        // Scenario: User uses the TextBox to send text to server, and hides the keyboard. User
+        // wants to end the session now, so he swipes-up from bottom to bring up the nav bar, but
+        // the TextBox also sees that swipe-up and it shows the keyboard. Now tap on Back navigation
+        // button will hide the keyboard instead of ending the session. User must switch away from
+        // text-page to break this loop. So we clear the focus here to avoid this issue.
+        (stub.binding as? VirtualKeysBinding)?.textBox?.let { if (it.isFocused) it.clearFocus() }
     }
 
-    fun onConnected(inPiP: Boolean) {
-        if (!inPiP && pref.runInfo.showVirtualKeys)
+    fun onConnected() {
+        if (pref.runInfo.showVirtualKeys && !viewModel.inPiPMode.isTrue)
             show()
-    }
-
-    fun onPiPModeChanged(inPiPMode: Boolean) {
-        if (inPiPMode && container?.isVisible == true) {
-            hide()
-            closedByPiPMode = true
-        } else if (!inPiPMode && closedByPiPMode) {
-            show()
-            closedByPiPMode = false
-        }
     }
 
     fun releaseMetaKeys() {
@@ -124,6 +124,16 @@ class VirtualKeys(activity: VncActivity) {
             releaseUnlockedMetaKeys()
     }
 
+    private fun onPiPModeChanged(inPiPMode: Boolean) {
+        if (inPiPMode && container?.isVisible == true) {
+            hide()
+            closedByPiPMode = true
+        } else if (!inPiPMode && closedByPiPMode) {
+            show()
+            closedByPiPMode = false
+        }
+    }
+
     private fun init() {
         if (stub.isInflated)
             return
@@ -133,7 +143,8 @@ class VirtualKeys(activity: VncActivity) {
         initTextPage(binding)
         initKeys(binding)
         initPager(binding)
-        keyHandler.processedEventObserver = ::onAfterKeyEvent
+        inputHandler.onAfterKeyEventListeners += ::onAfterKeyEvent
+        viewModel.inPiPMode.observe(activity) { onPiPModeChanged(it) }
     }
 
     /**
@@ -171,8 +182,11 @@ class VirtualKeys(activity: VncActivity) {
         pager.addOnPageChangeListener(object : ViewPager.SimpleOnPageChangeListener() {
             val textPageIndex = pages.indexOf(binding.textPage)
             override fun onPageSelected(position: Int) {
-                if (position == textPageIndex) binding.textBox.requestFocus()
-                else frameView.requestFocus()
+                if (ViewCompat.getRootWindowInsets(root)?.isVisible(Type.ime()) == true) {
+                    if (position == textPageIndex) binding.textBox.requestFocus()
+                    else frameView.requestFocus()
+                }
+                pref.runInfo.virtualKeysTextBoxVisible = (position == textPageIndex)
             }
         })
 
@@ -186,12 +200,16 @@ class VirtualKeys(activity: VncActivity) {
         root.layoutParams = root.layoutParams.apply { width = keys.measuredWidth; height = keys.measuredHeight }
 
         // Update size after layout changes
-        keys.viewTreeObserver.addOnGlobalLayoutListener {
+        addOnGlobalLayoutListener(activity, keys) {
             val w = min(keys.width, frameView.width)
             val h = keys.height
             if (w > 0 && h > 0 && (root.width != w || root.height != h))
                 root.layoutParams = root.layoutParams.apply { width = w; height = h }
         }
+
+        // Switch to text page if it was active last time
+        if (pref.runInfo.virtualKeysTextBoxVisible)
+            pager.setCurrentItem(pages.indexOf(binding.textPage), false)
     }
 
 
@@ -213,6 +231,7 @@ class VirtualKeys(activity: VncActivity) {
     }
 
     private fun initKeys(binding: VirtualKeysBinding) {
+        binding.keys.rowCount = pref.input.vkRowCount
         VirtualKeyLayoutConfig.getLayout(pref).forEach { vk ->
             val view = VirtualKeyViewFactory.create(binding.root.context, vk)
             binding.keys.addView(view)
@@ -237,7 +256,7 @@ class VirtualKeys(activity: VncActivity) {
 
     private fun initToggleKey(key: ToggleButton, keyCode: Int) {
         key.setOnCheckedChangeListener { _, isChecked ->
-            keyHandler.onKeyEvent(keyCode, isChecked)
+            sendKey(keyCode, isChecked)
             if (!isChecked) lockedToggleKeys.remove(key)
         }
         key.setOnLongClickListener {
@@ -245,12 +264,19 @@ class VirtualKeys(activity: VncActivity) {
             if (key.isChecked) lockedToggleKeys.add(key)
             true
         }
+
+        if ((keyCode == KeyEvent.KEYCODE_META_LEFT || keyCode == KeyEvent.KEYCODE_META_RIGHT) && pref.input.vkUseSuperWithSingleTap)
+            key.setOnClickListener {
+                key.isChecked = true
+                key.isChecked = false
+            }
+
         toggleKeys.add(key)
     }
 
     private fun initNormalKey(key: View, keyCode: Int) {
         check(key !is ToggleButton) { "use initToggleKey()" }
-        key.setOnClickListener { keyHandler.onKey(keyCode) }
+        key.setOnClickListener { sendKey(keyCode) }
         makeKeyRepeatable(key)
     }
 
@@ -292,12 +318,27 @@ class VirtualKeys(activity: VncActivity) {
         val text = textBox.text?.ifEmpty { "\n" }?.toString() ?: return
         val events = keyCharMap.getEvents(text.toCharArray())
 
-        if (events == null || text.contains('ç', true))
-            keyHandler.onKeyEvent(KeyEvent(SystemClock.uptimeMillis(), text, 0, 0))
+        // Release Meta keys to avoid interference with these key events
+        releaseMetaKeys()
+
+        // These events are sent to KeyHandler.onKeyEvent() instead of onVkKeyEvent()
+        // to treat these like normal system key events.
+        if (events == null)
+            inputHandler.onKeyEvent(KeyEvent(SystemClock.uptimeMillis(), text, 0, 0))
         else
-            events.forEach { keyHandler.onKeyEvent(it) }
+            events.forEach { inputHandler.onKeyEvent(it) }
 
         textBox.setText("")
+    }
+
+    private fun sendKey(keyCode: Int) {
+        sendKey(keyCode, true)
+        sendKey(keyCode, false)
+    }
+
+    private fun sendKey(keyCode: Int, isDown: Boolean) {
+        val action = if (isDown) KeyEvent.ACTION_DOWN else KeyEvent.ACTION_UP
+        inputHandler.onVkKeyEvent(KeyEvent(action, keyCode))
     }
 }
 
@@ -319,7 +360,6 @@ enum class VirtualKey(
         /**
          * If icon is set, this key will be rendered as an ImageButton.
          */
-        @DrawableRes
         val icon: Int? = null,
 
         /**
@@ -335,10 +375,10 @@ enum class VirtualKey(
     CloseKeys(description = "Close virtual keys", icon = R.drawable.ic_clear),
 
     // Meta keys
-    RightShift(keyCode = KeyEvent.KEYCODE_SHIFT_RIGHT, label = "Shift", isToggle = true),
-    RightCtrl(keyCode = KeyEvent.KEYCODE_CTRL_RIGHT, label = "Ctrl", isToggle = true),
-    RightAlt(keyCode = KeyEvent.KEYCODE_ALT_RIGHT, label = "Alt", isToggle = true),
-    RightSuper(keyCode = KeyEvent.KEYCODE_META_RIGHT, label = "Super", icon = R.drawable.ic_super_key, isToggle = true),
+    LeftShift(keyCode = KeyEvent.KEYCODE_SHIFT_LEFT, label = "Shift", isToggle = true),
+    LeftCtrl(keyCode = KeyEvent.KEYCODE_CTRL_LEFT, label = "Ctrl", isToggle = true),
+    LeftAlt(keyCode = KeyEvent.KEYCODE_ALT_LEFT, label = "Alt", isToggle = true),
+    LeftSuper(keyCode = KeyEvent.KEYCODE_META_LEFT, label = "Super", icon = R.drawable.ic_super_key, isToggle = true),
 
     Esc(keyCode = KeyEvent.KEYCODE_ESCAPE),
     Tab(keyCode = KeyEvent.KEYCODE_TAB),
@@ -375,8 +415,8 @@ enum class VirtualKey(
  */
 object VirtualKeyLayoutConfig {
 
-    private val DEFAULT_LAYOUT = listOf(VirtualKey.ToggleKeyboard, VirtualKey.CloseKeys, VirtualKey.Esc, VirtualKey.RightSuper,
-                                        VirtualKey.Tab, VirtualKey.RightCtrl, VirtualKey.RightShift, VirtualKey.RightAlt,
+    private val DEFAULT_LAYOUT = listOf(VirtualKey.ToggleKeyboard, VirtualKey.CloseKeys, VirtualKey.Esc, VirtualKey.LeftSuper,
+                                        VirtualKey.Tab, VirtualKey.LeftCtrl, VirtualKey.LeftShift, VirtualKey.LeftAlt,
                                         VirtualKey.Home, VirtualKey.Left, VirtualKey.Up, VirtualKey.Down, VirtualKey.End,
                                         VirtualKey.Right, VirtualKey.PgUp, VirtualKey.PgDn)
 
@@ -428,7 +468,7 @@ object VirtualKeyLayoutConfig {
 object VirtualKeyViewFactory {
 
     /**
-     * There are three types of Views tht are generated:
+     * There are three types of Views that are generated:
      *
      * [ToggleButton] - if [key] is a toggle
      * [ImageButton]  - if [key] has an icon (label will be ignored)

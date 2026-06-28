@@ -13,7 +13,6 @@
     <string name="title_export">Exportieren</string>
     <string name="title_import">Importieren</string>
     <string name="title_view_only_mode">Nur anzeigen</string>
-    <string name="title_key_compat_mode">Legacy key events senden</string>
     <string name="title_use_ssh_tunnel">Durch SSH tunneln</string>
     <string name="title_password">Passwort</string>
     <string name="title_use_repeater">Repeater nutzen</string>
@@ -32,7 +31,6 @@
     <string name="msg_invalid_key_file">Ungültiger private key</string>
     <string name="msg_invalid_vnc_uri">Ungültige VNC-URI</string>
     <string name="msg_copied_to_clipboard">Kopiert</string>
-    <string name="msg_key_compat_mode_help">Einige Server unterstützen Unicode-Zeichen nur teilweise. Legacy key events kann die Eingabe von nicht-englischem Text ermöglichen.</string>
     <string name="tip_empty_server_list">Die Serverliste ist leer.
 \nDrücke \'<b>+</b>\', um einen Server hinzuzufügen, oder
 \nnutze die Adresszeile oben, um direkt eine Verbindung aufzubauen.</string>
@@ -164,7 +162,7 @@
 \n
 \n<b>Drücken-Halten-Loslassen</b> → Lange drücken
 \n<b>Drücken-Halten-Wischen</b> → Drücken und ziehen (Drag and Drop)</string>
-    <string name="pref_display_cutout">Hinter Bildschirmausschnitt zeichnen (experimentell)</string>
+    <string name="pref_display_cutout">In den Ausschnittbereich hinein verlängern</string>
     <string name="pref_key_test">Tastentest</string>
     <string name="pref_gesture_style">Gestenstil</string>
     <string name="pref_invert_vertical_scrolling">Vertikalen Bildlauf umkehren</string>
@@ -200,7 +198,6 @@
     <string name="msg_zoom_locked">Zoom gesperrt</string>
     <string name="msg_zoom_unlocked">Zoom entsperrt</string>
     <string name="hint_send_text_to_server">Text an den Server senden</string>
-    <string name="msg_pk_password_not_saved">Zur Verbesserung der Sicherheit speichert AVNC keine privaten Schlüsselpasswörter mehr.</string>
     <string name="tip_toolbar_usage">Wischen Sie vom Rand nach innen, um die Symbolleiste zu öffnen. Verwenden Sie sie, um die Tastatur zu öffnen, den Gestenstil zu ändern oder den Zoom zurückzusetzen.</string>
     <string name="tip_session_end">Um eine Sitzung zu beenden, tippen Sie auf die Navigationsschaltfläche „Zurück“, so als würden Sie von einem laufenden Video zurückgehen.</string>
     <string name="msg_viewer_tips_label">Ein paar Tipps für den Anfang</string>
@@ -218,4 +215,23 @@
 \nKonfigurieren Sie WoL zunächst auf dem Remotecomputer und aktivieren Sie es dann in AVNC.
 \nNach der Aktivierung wird vor der Verbindung mit diesem Server automatisch ein WoL-Magic-Packet gesendet.</string>
     <string name="pref_keep_screen_on">Bildschirm eingeschaltet lassen</string>
+    <string name="title_try">Versuchen</string>
+    <string name="title_forget">Vergessen</string>
+    <string name="title_always_show_advanced_editor">Erweiterte Optionen immer anzeigen</string>
+    <string name="title_export_passwords_and_keys">Passwörter und Schlüssel exportieren</string>
+    <string name="title_load_defaults">Standardwerte laden</string>
+    <string name="msg_saved">Gespeichert</string>
+    <string name="msg_done">Erledigt</string>
+    <string name="msg_required">Erforderlich</string>
+    <string name="msg_invalid_mac_address">Ungültige MAC-Adresse</string>
+    <string name="msg_tap_to_select_a_key">Tippen Sie, um eine Taste auszuwählen:</string>
+    <string name="desc_toolbar_btn">Symbolleiste öffnen</string>
+    <string name="pref_gesture_action_left_press">Lange drücken</string>
+    <string name="pref_three_finger_tap">Drei-Finger-Tippen</string>
+    <string name="pref_swipe3">Wischen mit drei Fingern</string>
+    <string name="pref_long_press_swipe_disabled_summary">Deaktiviert durch den aktuellen Wert der Geste <b>Langes Drücken</b></string>
+    <string name="pref_customize_virtual_keys">Tasten anpassen</string>
+    <string name="pref_toolbar_open_with_button">Schaltfläche zum Öffnen anzeigen</string>
+    <string name="pref_forget_known_hosts">Bekannte Hosts vergessen</string>
+    <string name="pref_forget_known_hosts_question">Bekannte SSH-Hosts und vertrauenswürdige Serverzertifikate vergessen?</string>
 </resources>
